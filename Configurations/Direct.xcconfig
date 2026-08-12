@@ -1,0 +1,5 @@
+#include "Base.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = Configurations/TerminatorDirect.entitlements
+ENABLE_APP_SANDBOX = NO
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) TERMINATOR_DIRECT

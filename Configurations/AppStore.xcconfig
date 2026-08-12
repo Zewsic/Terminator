@@ -1,0 +1,6 @@
+#include "Base.xcconfig"
+
+CODE_SIGN_ENTITLEMENTS = Configurations/TerminatorAppStore.entitlements
+ENABLE_APP_SANDBOX = YES
+ENABLE_USER_SELECTED_FILES = readonly
+SWIFT_ACTIVE_COMPILATION_CONDITIONS = $(inherited) APP_STORE

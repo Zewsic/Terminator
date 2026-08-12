@@ -6,8 +6,21 @@
 	objectVersion = 90;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* TerminatorCore in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000001 /* TerminatorCore */; };
+		A10000000000000000000002 /* TerminatorPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* TerminatorPersistence */; };
+		A10000000000000000000003 /* TerminatorSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* TerminatorSecurity */; };
+		A10000000000000000000004 /* TerminatorFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000004 /* TerminatorFeatures */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		000000000000000000000120 /* Terminator.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Terminator.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C00000000000000000000001 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		C00000000000000000000002 /* Direct.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Direct.xcconfig; sourceTree = "<group>"; };
+		C00000000000000000000003 /* AppStore.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = AppStore.xcconfig; sourceTree = "<group>"; };
+		C00000000000000000000004 /* TerminatorDirect.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TerminatorDirect.entitlements; sourceTree = "<group>"; };
+		C00000000000000000000005 /* TerminatorAppStore.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TerminatorAppStore.entitlements; sourceTree = "<group>"; };
+		D00000000000000000000150 /* TerminatorUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TerminatorUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -16,10 +29,24 @@
 			path = Terminator;
 			sourceTree = "<group>";
 		};
+		D00000000000000000000010 /* TerminatorUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TerminatorUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		000000000000000130000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				A10000000000000000000001 /* TerminatorCore in Frameworks */,
+				A10000000000000000000002 /* TerminatorPersistence in Frameworks */,
+				A10000000000000000000003 /* TerminatorSecurity in Frameworks */,
+				A10000000000000000000004 /* TerminatorFeatures in Frameworks */,
+			);
+		};
+		D00000000000000000000130 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
 			);
@@ -31,6 +58,8 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000010 /* Terminator */,
+				D00000000000000000000010 /* TerminatorUITests */,
+				C00000000000000000000010 /* Configurations */,
 				000000000000000000000020 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -39,16 +68,29 @@
 			isa = PBXGroup;
 			children = (
 				000000000000000000000120 /* Terminator.app */,
+				D00000000000000000000150 /* TerminatorUITests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		C00000000000000000000010 /* Configurations */ = {
+			isa = PBXGroup;
+			children = (
+				C00000000000000000000001 /* Base.xcconfig */,
+				C00000000000000000000002 /* Direct.xcconfig */,
+				C00000000000000000000003 /* AppStore.xcconfig */,
+				C00000000000000000000004 /* TerminatorDirect.entitlements */,
+				C00000000000000000000005 /* TerminatorAppStore.entitlements */,
+			);
+			path = Configurations;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		000000000000000100000000 /* Terminator */ = {
+		000000000000000100000000 /* TerminatorMac */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "Terminator" */;
+			buildConfigurationList = 000000000000000110000000 /* Build configuration list for PBXNativeTarget "TerminatorMac" */;
 			buildPhases = (
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
@@ -59,12 +101,49 @@
 			fileSystemSynchronizedGroups = (
 				000000000000000000000010 /* Terminator */,
 			);
-			name = Terminator;
-			productName = MyApp;
+			name = TerminatorMac;
+			packageProductDependencies = (
+				A20000000000000000000001 /* TerminatorCore */,
+				A20000000000000000000002 /* TerminatorPersistence */,
+				A20000000000000000000003 /* TerminatorSecurity */,
+				A20000000000000000000004 /* TerminatorFeatures */,
+			);
+			productName = Terminator;
 			productReference = 000000000000000000000120 /* Terminator.app */;
 			productType = "com.apple.product-type.application";
 		};
+		D00000000000000000000100 /* TerminatorUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D00000000000000000000110 /* Build configuration list for PBXNativeTarget "TerminatorUITests" */;
+			buildPhases = (
+				D00000000000000000000120 /* Sources */,
+				D00000000000000000000130 /* Frameworks */,
+				D00000000000000000000140 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				D00000000000000000000201 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				D00000000000000000000010 /* TerminatorUITests */,
+			);
+			name = TerminatorUITests;
+			productName = TerminatorUITests;
+			productReference = D00000000000000000000150 /* TerminatorUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		D00000000000000000000200 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000100000000;
+			remoteInfo = TerminatorMac;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		000000000000000000000000 /* Project object */ = {
@@ -76,6 +155,10 @@
 				TargetAttributes = {
 					000000000000000100000000 = {
 						CreatedOnToolsVersion = 26.3;
+					};
+					D00000000000000000000100 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 000000000000000100000000;
 					};
 				};
 			};
@@ -91,15 +174,24 @@
 			preferredProjectObjectVersion = 90;
 			productRefGroup = 000000000000000000000020 /* Products */;
 			projectDirPath = "";
+			packageReferences = (
+				A30000000000000000000001 /* XCLocalSwiftPackageReference "Packages/TerminatorKit" */,
+			);
 			projectRoot = "";
 			targets = (
-				000000000000000100000000 /* Terminator */,
+				000000000000000100000000 /* TerminatorMac */,
+				D00000000000000000000100 /* TerminatorUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		000000000000000140000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		D00000000000000000000140 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -112,7 +204,20 @@
 			files = (
 			);
 		};
+		D00000000000000000000120 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		D00000000000000000000201 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000100000000 /* TerminatorMac */;
+			targetProxy = D00000000000000000000200 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		000000000000000011000000 /* Debug configuration for PBXProject "Terminator" */ = {
@@ -247,12 +352,13 @@
 			};
 			name = Release;
 		};
-		000000000000000111000000 /* Debug configuration for PBXNativeTarget "Terminator" */ = {
+		000000000000000111000000 /* Debug configuration for PBXNativeTarget "TerminatorMac" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000002 /* Direct.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -268,28 +374,28 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:identifier)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator;
+				PRODUCT_NAME = Terminator;
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
 		};
-		000000000000000112000000 /* Release configuration for PBXNativeTarget "Terminator" */ = {
+		000000000000000112000000 /* Release configuration for PBXNativeTarget "TerminatorMac" */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000002 /* Direct.xcconfig */;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -305,21 +411,174 @@
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "devplaceholder.$(PROJECT_UNIQUE_VALUE:identifier).$(PRODUCT_NAME:identifier)";
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator;
+				PRODUCT_NAME = Terminator;
 				REGISTER_APP_GROUPS = YES;
-				SDKROOT = auto;
+				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2,7";
+				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
+		};
+		000000000000000013000000 /* Debug-AppStore configuration for PBXProject "Terminator" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = "Debug-AppStore";
+		};
+		000000000000000014000000 /* Release-AppStore configuration for PBXProject "Terminator" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = "Release-AppStore";
+		};
+		000000000000000113000000 /* Debug-AppStore configuration for PBXNativeTarget "TerminatorMac" */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000003 /* AppStore.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator;
+				PRODUCT_NAME = Terminator;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG APP_STORE $(inherited)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 6.0;
+			};
+			name = "Debug-AppStore";
+		};
+		000000000000000114000000 /* Release-AppStore configuration for PBXNativeTarget "TerminatorMac" */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000003 /* AppStore.xcconfig */;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator;
+				PRODUCT_NAME = Terminator;
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "APP_STORE $(inherited)";
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 6.0;
+			};
+			name = "Release-AppStore";
+		};
+		D00000000000000000000111 /* Debug configuration for PBXNativeTarget "TerminatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = TerminatorMac;
+			};
+			name = Debug;
+		};
+		D00000000000000000000112 /* Release configuration for PBXNativeTarget "TerminatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = TerminatorMac;
+			};
+			name = Release;
+		};
+		D00000000000000000000113 /* Debug-AppStore configuration for PBXNativeTarget "TerminatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = TerminatorMac;
+			};
+			name = "Debug-AppStore";
+		};
+		D00000000000000000000114 /* Release-AppStore configuration for PBXNativeTarget "TerminatorUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = pro.zewsic.terminator.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SUPPORTED_PLATFORMS = macosx;
+				SWIFT_VERSION = 6.0;
+				TEST_TARGET_NAME = TerminatorMac;
+			};
+			name = "Release-AppStore";
 		};
 /* End XCBuildConfiguration section */
 
@@ -329,18 +588,59 @@
 			buildConfigurations = (
 				000000000000000011000000 /* Debug configuration for PBXProject "Terminator" */,
 				000000000000000012000000 /* Release configuration for PBXProject "Terminator" */,
+				000000000000000013000000 /* Debug-AppStore configuration for PBXProject "Terminator" */,
+				000000000000000014000000 /* Release-AppStore configuration for PBXProject "Terminator" */,
 			);
 			defaultConfigurationName = Release;
 		};
-		000000000000000110000000 /* Build configuration list for PBXNativeTarget "Terminator" */ = {
+		000000000000000110000000 /* Build configuration list for PBXNativeTarget "TerminatorMac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				000000000000000111000000 /* Debug configuration for PBXNativeTarget "Terminator" */,
-				000000000000000112000000 /* Release configuration for PBXNativeTarget "Terminator" */,
+				000000000000000111000000 /* Debug configuration for PBXNativeTarget "TerminatorMac" */,
+				000000000000000112000000 /* Release configuration for PBXNativeTarget "TerminatorMac" */,
+				000000000000000113000000 /* Debug-AppStore configuration for PBXNativeTarget "TerminatorMac" */,
+				000000000000000114000000 /* Release-AppStore configuration for PBXNativeTarget "TerminatorMac" */,
 			);
+			defaultConfigurationName = Release;
+		};
+		D00000000000000000000110 /* Build configuration list for PBXNativeTarget "TerminatorUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D00000000000000000000111 /* Debug configuration for PBXNativeTarget "TerminatorUITests" */,
+				D00000000000000000000112 /* Release configuration for PBXNativeTarget "TerminatorUITests" */,
+				D00000000000000000000113 /* Debug-AppStore configuration for PBXNativeTarget "TerminatorUITests" */,
+				D00000000000000000000114 /* Release-AppStore configuration for PBXNativeTarget "TerminatorUITests" */,
+			);
+			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A30000000000000000000001 /* XCLocalSwiftPackageReference "Packages/TerminatorKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/TerminatorKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A20000000000000000000001 /* TerminatorCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TerminatorCore;
+		};
+		A20000000000000000000002 /* TerminatorPersistence */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TerminatorPersistence;
+		};
+		A20000000000000000000003 /* TerminatorSecurity */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TerminatorSecurity;
+		};
+		A20000000000000000000004 /* TerminatorFeatures */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TerminatorFeatures;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 000000000000000000000000 /* Project object */;
 }

@@ -1,0 +1,158 @@
+# Terminator
+
+Terminator is a native SwiftUI workspace for SSH sessions, local terminals, port forwarding, Docker infrastructure, credentials, snippets, and file transfers across Apple platforms.
+
+The project exists because infrastructure access should be durable, inspectable, and recoverable. Losing a host catalog or silently replacing credentials is not acceptable. Terminator keeps ordinary metadata versioned and keeps secret material outside that history.
+
+> [!IMPORTANT]
+> Terminator is at its first foundation milestone. Host and credential management are functional. SSH, terminal emulation, Docker connectivity, tunnels, snippets, and file transfer are not implemented yet. Container rows in the current UI are explicitly marked demo data.
+
+## What works
+
+- Native macOS 26+ SwiftUI application using `NavigationSplitView` and system navigation styling.
+- Create, search, edit, and archive SSH host profiles.
+- Create password, private-key, and passphrase credentials.
+- Store secret bytes in the device-only Keychain.
+- Keep host and credential metadata in a local SwiftData store.
+- Record an append-only change history and revert metadata changes without rewriting history.
+- Retain archived and replaced Keychain items until an explicit manual purge.
+- Build separate Direct and Mac App Store editions from one codebase.
+
+## Requirements
+
+- macOS 26 or newer
+- Xcode 26 or newer
+- Swift 6
+
+The current checkout was verified with Xcode 27 beta and Swift 6.4.
+
+## Build
+
+Open `Terminator.xcodeproj` and select one of the shared schemes:
+
+- **Terminator Direct** — not sandboxed; reserves the capability boundary for a future local PTY and user-controlled filesystem access.
+- **Terminator App Store** — sandboxed with outgoing network access; local shell support is excluded.
+
+Command-line builds:
+
+```sh
+xcodebuild \
+  -project Terminator.xcodeproj \
+  -scheme "Terminator Direct" \
+  -destination "platform=macOS" \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+
+xcodebuild \
+  -project Terminator.xcodeproj \
+  -scheme "Terminator App Store" \
+  -configuration Debug-AppStore \
+  -destination "platform=macOS" \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
+
+Run package tests:
+
+```sh
+cd Packages/TerminatorKit
+swift test
+```
+
+## Architecture
+
+The macOS app target is a thin composition root. Reusable code lives in a local Swift package that already declares macOS 26 and iOS 26 support.
+
+```mermaid
+flowchart LR
+    View[SwiftUI View] --> VM[Observable View Model]
+    VM --> UseCase[Application operation]
+    UseCase --> Port[Repository or service protocol]
+    Port --> SwiftData[SwiftData actor]
+    Port --> Keychain[Keychain actor]
+    Port -. future .-> SSH[SwiftNIO SSH adapter]
+    Port -. future .-> Docker[Docker Engine API adapter]
+```
+
+Package products:
+
+- `TerminatorCore` — value types and `Sendable` ports.
+- `TerminatorPersistence` — SwiftData records, mapping, repositories, and history.
+- `TerminatorSecurity` — Keychain-backed secret storage.
+- `TerminatorFeatures` — SwiftUI views and `@Observable` application state.
+- `TerminatorTestSupport` — in-memory ports, fixtures, and mock services.
+
+See [Architecture](Documentation/ARCHITECTURE.md) and [Security](Documentation/SECURITY.md) for the invariants and extension points.
+
+## Security principles
+
+- Secrets never enter SwiftData, history snapshots, UI previews, or application logs.
+- Keychain items use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and do not sync through iCloud.
+- Archiving a host never deletes its credential.
+- Purging a secret is explicit, confirmed, and irreversible.
+- Future SSH connections must verify host keys; permissive automatic acceptance is not an allowed production mode.
+- Future remote Docker access must use SSH or mutually authenticated TLS. Plaintext Docker TCP is out of scope.
+
+Please do not disclose vulnerabilities in public issues. Until a dedicated security mailbox exists, contact the maintainer privately through the repository owner profile.
+
+## Roadmap / TODO
+
+### 1. Foundation
+
+- [x] Modular Swift 6 architecture
+- [x] macOS host catalog
+- [x] SwiftData metadata storage
+- [x] Keychain secret storage
+- [x] Append-only history and metadata restore
+- [x] Direct and App Store editions
+- [ ] Import existing `~/.ssh/config` without copying private key bytes
+- [ ] Export an encrypted catalog backup
+
+### 2. SSH
+
+- [ ] SwiftNIO SSH transport
+- [ ] Password, key, agent, and keyboard-interactive authentication
+- [ ] Strict `known_hosts` management and host-key change warnings
+- [ ] Multiple sessions, reconnect, jump hosts, and connection multiplexing
+
+### 3. Terminal and tunnels
+
+- [ ] VT/xterm-compatible renderer
+- [ ] Direct-edition local PTY
+- [ ] Local, remote, and dynamic port forwarding
+- [ ] Saved tunnel profiles and runtime status
+
+### 4. Docker
+
+- [ ] Local Unix-socket transport
+- [ ] Docker Engine API negotiation
+- [ ] Remote Docker over the existing SSH transport
+- [ ] Containers, Compose projects, services, events, logs, lifecycle actions, and exec
+- [ ] Aggregated health monitoring across endpoints
+
+### 5. Files and automation
+
+- [ ] SFTP browser and resumable transfers
+- [ ] Local-to-server and server-to-server transfers with checksums
+- [ ] Parameterized command snippets
+- [ ] Auditable batch actions
+
+### 6. Sync and recovery
+
+- [ ] Client-side encrypted CloudKit or file-based sync
+- [ ] Deterministic conflict resolution
+- [ ] Backup verification and disaster-recovery flow
+
+### 7. Other platforms
+
+- [ ] iOS and iPadOS companion targets using the shared package
+- [ ] Evaluate watchOS monitoring and safe, limited actions
+- [ ] Add other Apple platforms only where the interaction model is useful
+
+## Licensing
+
+Terminator is **source-available**, not OSI Open Source. It is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+Personal study, private use, hobby projects, experimentation, modifications, and contributions are welcome under that license. Commercial use requires a separate commercial license from Zewsic.
+
+Commercial licensing: [terminator@zewsic.pro](mailto:terminator@zewsic.pro)

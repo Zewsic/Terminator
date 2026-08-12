@@ -1,0 +1,6 @@
+.DS_Store
+.codegraph/
+DerivedData/
+.build/
+*.xcuserstate
+xcuserdata/
