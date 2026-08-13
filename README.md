@@ -11,8 +11,14 @@ The project exists because infrastructure access should be durable, inspectable,
 
 - Native macOS 26+ SwiftUI application using `NavigationSplitView` and system navigation styling.
 - Create, search, edit, and archive SSH host profiles.
-- Create password, private-key, and passphrase credentials.
-- Store secret bytes in the device-only Keychain.
+- Create reusable Identities with one embedded password and an ordered set of access keys.
+- Configure the same one-password/multiple-keys model directly on a Host in Manual mode.
+- Generate Ed25519, ECDSA, RSA, or Secure Enclave access keys as reusable Credentials.
+- Omit routine labels: a Host falls back to its hostname and a nested key becomes `Key #N for “Host or Identity”`.
+- Import encrypted or unencrypted OpenSSH plus unencrypted PKCS#1, SEC1, and PKCS#8 keys with automatic algorithm detection, normalization, and public-key verification.
+- Edit private/public key text and passphrases after system authentication, or load key files through the picker and drag-and-drop.
+- Store private material and optional saved passphrases as separate device-only Keychain items.
+- Select an Identity or configure a manual username and authentication methods for each Host.
 - Keep host and credential metadata in a local SwiftData store.
 - Record an append-only change history and revert metadata changes without rewriting history.
 - Retain archived and replaced Keychain items until an explicit manual purge.
@@ -88,8 +94,9 @@ See [Architecture](Documentation/ARCHITECTURE.md) and [Security](Documentation/S
 
 - Secrets never enter SwiftData, history snapshots, UI previews, or application logs.
 - Keychain items use `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` and do not sync through iCloud.
-- Archiving a host never deletes its credential.
+- A referenced access-key Credential or Identity cannot be archived or purged.
 - Purging a secret is explicit, confirmed, and irreversible.
+- Software private-key export requires system authentication; Secure Enclave private keys are never exportable.
 - Future SSH connections must verify host keys; permissive automatic acceptance is not an allowed production mode.
 - Future remote Docker access must use SSH or mutually authenticated TLS. Plaintext Docker TCP is out of scope.
 
@@ -112,6 +119,8 @@ Please do not disclose vulnerabilities in public issues. Until a dedicated secur
 
 - [ ] SwiftNIO SSH transport
 - [ ] Password, key, agent, and keyboard-interactive authentication
+- [ ] SSH certificates as public attachments to matching access keys, including certified-key, CA fingerprint, principals, and validity checks
+- [ ] FIDO2/U2F access keys through a dedicated CTAP2/libfido2 backend with user presence/verification and no stored PIN
 - [ ] Strict `known_hosts` management and host-key change warnings
 - [ ] Multiple sessions, reconnect, jump hosts, and connection multiplexing
 

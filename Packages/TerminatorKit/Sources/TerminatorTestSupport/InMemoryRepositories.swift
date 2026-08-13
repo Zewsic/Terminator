@@ -1,9 +1,10 @@
 import Foundation
 import TerminatorCore
 
-public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, HistoryRepository {
+public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository {
     private var hosts: [UUID: HostProfile]
     private var credentials: [UUID: CredentialMetadata]
+    private var identities: [UUID: IdentityProfile]
     private var history: [HistoryEntry]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
@@ -11,10 +12,12 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Hist
     public init(
         hosts: [HostProfile] = [],
         credentials: [CredentialMetadata] = [],
+        identities: [IdentityProfile] = [],
         history: [HistoryEntry] = []
     ) {
         self.hosts = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
         self.credentials = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
+        self.identities = Dictionary(uniqueKeysWithValues: identities.map { ($0.id, $0) })
         self.history = history
     }
 
@@ -73,6 +76,37 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Hist
         history.append(try entry(entity: .credential, id: id, operation: .deleted, before: before, after: after))
     }
 
+    public func listIdentities(includeDeleted: Bool) -> [IdentityProfile] {
+        identities.values
+            .filter { includeDeleted || !$0.isDeleted }
+            .sorted { $0.name < $1.name }
+    }
+
+    public func identity(id: UUID) -> IdentityProfile? { identities[id] }
+
+    public func saveIdentity(_ identity: IdentityProfile) throws {
+        let identity = try identity.validated()
+        let before = identities[identity.id]
+        identities[identity.id] = identity
+        history.append(try entry(entity: .identity, id: identity.id, operation: before == nil ? .created : .updated, before: before, after: identity))
+    }
+
+    public func deleteIdentity(id: UUID) throws {
+        guard let before = identities[id] else { return }
+        var after = before
+        after.deletedAt = .now
+        identities[id] = after
+        history.append(try entry(entity: .identity, id: id, operation: .deleted, before: before, after: after))
+    }
+
+    public func restoreIdentity(id: UUID) throws {
+        guard let before = identities[id] else { return }
+        var after = before
+        after.deletedAt = nil
+        identities[id] = after
+        history.append(try entry(entity: .identity, id: id, operation: .restored, before: before, after: after))
+    }
+
     public func listHistory(entity: HistoryEntity?) -> [HistoryEntry] {
         history.filter { entity == nil || $0.entity == entity }.sorted { $0.timestamp > $1.timestamp }
     }
@@ -98,6 +132,15 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Hist
                 credentials[change.entityID] = current
             }
             history.append(try entry(entity: .credential, id: change.entityID, operation: .restored, before: before, after: credentials[change.entityID]))
+        case .identity:
+            let before = identities[change.entityID]
+            if let snapshot = change.beforeSnapshot {
+                identities[change.entityID] = try decoder.decode(IdentityProfile.self, from: snapshot)
+            } else if var current = before {
+                current.deletedAt = .now
+                identities[change.entityID] = current
+            }
+            history.append(try entry(entity: .identity, id: change.entityID, operation: .restored, before: before, after: identities[change.entityID]))
         }
     }
 

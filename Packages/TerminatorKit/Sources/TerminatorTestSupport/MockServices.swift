@@ -19,6 +19,48 @@ public actor MockSSHService: SSHService {
     }
 }
 
+public actor MockAccessKeyService: AccessKeyService {
+    public var preparedKey: PreparedAccessKey
+
+    public init(preparedKey: PreparedAccessKey = PreparedAccessKey(
+        privateMaterial: Data("mock-private-key".utf8),
+        algorithm: .ed25519,
+        backend: .software,
+        publicKey: "ssh-ed25519 bW9jaw==",
+        fingerprint: "SHA256:mock",
+        isPassphraseProtected: false
+    )) {
+        self.preparedKey = preparedKey
+    }
+
+    public func generateSoftwareKey(_ request: AccessKeyGenerationRequest) -> PreparedAccessKey {
+        var result = preparedKey
+        result.algorithm = request.algorithm.algorithm
+        result.isPassphraseProtected = !request.passphrase.isEmpty
+        return result
+    }
+
+    public func importSoftwareKey(_ request: AccessKeyImportRequest) -> PreparedAccessKey {
+        var result = preparedKey
+        result.isPassphraseProtected = !request.passphrase.isEmpty
+        return result
+    }
+
+    public func generateSecureEnclaveKey(label: String) -> PreparedAccessKey {
+        var result = preparedKey
+        result.algorithm = .ecdsa(.p256)
+        result.backend = .secureEnclave
+        return result
+    }
+
+    public func exportSoftwareKey(privateMaterial: Data, passphrase: String) -> Data { privateMaterial }
+}
+
+public actor AllowingUserPresenceAuthorizer: UserPresenceAuthorizer {
+    public init() {}
+    public func authorize(reason: String) {}
+}
+
 public actor MockDockerService: DockerService {
     private var containers: [ContainerSummary]
 

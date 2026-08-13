@@ -23,7 +23,12 @@ let package = Package(
         ),
         .target(
             name: "TerminatorSecurity",
-            dependencies: ["TerminatorCore"]
+            dependencies: ["TerminatorCore", "CBcryptPBKDF"]
+        ),
+        .target(
+            name: "CBcryptPBKDF",
+            publicHeadersPath: "include",
+            linkerSettings: [.linkedFramework("Security")]
         ),
         .target(
             name: "TerminatorFeatures",
@@ -43,7 +48,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TerminatorSecurityTests",
-            dependencies: ["TerminatorCore", "TerminatorSecurity"]
+            dependencies: ["TerminatorCore", "TerminatorSecurity", "TerminatorTestSupport"]
         ),
         .testTarget(
             name: "TerminatorFeaturesTests",

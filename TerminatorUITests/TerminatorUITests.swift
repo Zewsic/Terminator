@@ -35,12 +35,15 @@ final class TerminatorUITests: XCTestCase {
         let addButton = app.buttons["add-host"].exists ? app.buttons["add-host"] : app.buttons["add-host-empty"]
         addButton.click()
         let displayName = app.textFields["host-display-name"]
-        displayName.click()
-        displayName.typeText("UI Test Host\t")
-        app.typeText("example.test\t")
-        app.typeText("tester")
-        app.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(displayName.waitForExistence(timeout: 3))
+        let hostname = app.textFields["host-hostname"]
+        hostname.click()
+        hostname.typeText("example.test")
+        let username = app.textFields["host-username"]
+        username.click()
+        username.typeText("tester")
+        app.buttons["save-host"].click()
 
-        XCTAssertTrue(app.staticTexts["UI Test Host"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["example.test"].waitForExistence(timeout: 5))
     }
 }

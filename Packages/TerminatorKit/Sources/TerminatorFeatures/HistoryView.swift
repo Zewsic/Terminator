@@ -17,7 +17,7 @@ struct HistoryView: View {
                 ContentUnavailableView(
                     "No history yet",
                     systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
-                    description: Text("Host and credential metadata changes will appear here.")
+                    description: Text("Host, identity, and credential metadata changes will appear here.")
                 )
             } else {
                 List(entries) { entry in
@@ -51,6 +51,7 @@ struct HistoryView: View {
                 Text("All").tag(HistoryEntity?.none)
                 Text("Hosts").tag(Optional(HistoryEntity.host))
                 Text("Credentials").tag(Optional(HistoryEntity.credential))
+                Text("Identities").tag(Optional(HistoryEntity.identity))
             }
             .pickerStyle(.segmented)
             .frame(width: 260)
@@ -83,6 +84,11 @@ struct HistoryView: View {
             if let data = entry.afterSnapshot,
                let credential = try? JSONDecoder().decode(CredentialMetadata.self, from: data) {
                 return "\(credential.label) · \(credential.kind.displayName) · secret bytes redacted"
+            }
+        case .identity:
+            if let data = entry.afterSnapshot,
+               let identity = try? JSONDecoder().decode(IdentityProfile.self, from: data) {
+                return "\(identity.name) · \(identity.username) · \(identity.authenticationMethods.count) methods"
             }
         }
         return entry.entityID.uuidString

@@ -17,14 +17,18 @@ struct TerminatorApp: App {
             let container = try TerminatorSchema.makeContainer(inMemory: isUITesting)
             let store = TerminatorStore(modelContainer: container)
             let secretStore = KeychainSecretStore(service: "pro.zewsic.terminator.secrets")
+            let accessKeyService = AppleAccessKeyService()
             modelContainer = container
             _appModel = State(
                 initialValue: TerminatorAppModel(
                     capabilities: .current,
                     hostRepository: store,
                     credentialRepository: store,
+                    identityRepository: store,
                     historyRepository: store,
                     secretStore: secretStore,
+                    accessKeyService: accessKeyService,
+                    userPresenceAuthorizer: LocalAuthenticationAuthorizer(),
                     dockerService: DemoDockerService()
                 )
             )

@@ -18,7 +18,7 @@ It does not protect an already-unlocked user account from a malicious process wi
 
 ### Metadata
 
-Host profiles, credential labels, public fingerprints, opaque secret references, and history snapshots use a local SwiftData store. There is no CloudKit entitlement in this milestone.
+Host profiles, identity profiles, access-key labels, public keys, fingerprints, opaque secret references, and history snapshots use a local SwiftData store. There is no CloudKit entitlement in this milestone. Password bytes are never Credential metadata: Identity and Manual Host authentication store only their password's opaque `SecretID` and allow at most one password each.
 
 History is append-only through repository APIs. It contains `Codable` domain metadata, never arbitrary view state or secret input.
 
@@ -31,11 +31,21 @@ History is append-only through repository APIs. It contains `Codable` domain met
 - `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`;
 - `kSecAttrSynchronizable = false`.
 
-The application does not request Touch ID for each use. Access follows the unlocked-device Keychain policy selected for this milestone.
+Embedded password and software-key items follow the unlocked-device Keychain policy. Exporting a software private key additionally requires system authentication. A Secure Enclave key is fixed to ECDSA P-256 and is created with `privateKeyUsage + userPresence`, so every private-key operation requires Touch ID or the system password and its private key is never exportable.
 
-Secret replacement must allocate a new `SecretID`; it must not update an old Keychain item in place. Previous versions remain until the user explicitly purges an unused credential.
+Software private material and a saved passphrase use separate immutable Keychain items. If a passphrase is not saved, it exists only for the current operation and must be entered again for each connection attempt. Generated passphrase-protected keys are encrypted before storage; public key material and fingerprints are not secret.
 
-Manual purge is irreversible. The UI requires confirmation, removes the Keychain item, and records only that a purge occurred. History cannot restore the bytes.
+Secret replacement must allocate a new `SecretID`; it must not update an old Keychain item in place. Previous versions remain available to history rather than being overwritten. Legacy password Credentials are converted to embedded password methods when old records are read; their existing Keychain `SecretID` is preserved.
+
+Manual purge is irreversible. The UI requires confirmation and removes private material plus any saved passphrase as one compensating operation. If a Keychain or metadata write fails, already-removed items are restored. History records only that a purge occurred and cannot restore the bytes after a successful purge.
+
+Access-key metadata cannot be archived or purged while a Host or Identity references it. An Identity cannot be archived while a Host references it.
+
+### Import compatibility
+
+The in-process codec generates OpenSSH private keys for Ed25519, ECDSA P-256/P-384/P-521, and RSA-2048/RSA-4096. It reads and writes standard `openssh-key-v1` protection using attributed OpenBSD `bcrypt_pbkdf` plus AES-256-CTR, and imports unencrypted EC SEC1/PKCS#8, Ed25519 PKCS#8, and RSA PKCS#1/PKCS#8 before normalizing them to OpenSSH. Encrypted legacy PEM/PKCS#8 is rejected without saving partial data.
+
+Viewing or exporting software private material requires system authentication. Editing a key creates new immutable private-material and saved-passphrase items; old identifiers remain addressable by metadata history until explicit purge. Secure Enclave material can never enter this editor as private text.
 
 ## Logging and diagnostics
 

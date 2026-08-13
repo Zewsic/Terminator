@@ -15,6 +15,14 @@ public protocol CredentialRepository: Sendable {
     func deleteCredential(id: UUID) async throws
 }
 
+public protocol IdentityRepository: Sendable {
+    func listIdentities(includeDeleted: Bool) async throws -> [IdentityProfile]
+    func identity(id: UUID) async throws -> IdentityProfile?
+    func saveIdentity(_ identity: IdentityProfile) async throws
+    func deleteIdentity(id: UUID) async throws
+    func restoreIdentity(id: UUID) async throws
+}
+
 public protocol HistoryRepository: Sendable {
     func listHistory(entity: HistoryEntity?) async throws -> [HistoryEntry]
     func revert(historyEntryID: UUID) async throws

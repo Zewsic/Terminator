@@ -3,6 +3,7 @@ import Foundation
 public enum HistoryEntity: String, Codable, CaseIterable, Hashable, Sendable {
     case host
     case credential
+    case identity
 }
 
 public enum HistoryOperation: String, Codable, CaseIterable, Hashable, Sendable {
@@ -30,7 +31,7 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
         entityID: UUID,
         operation: HistoryOperation,
         timestamp: Date = .now,
-        schemaVersion: Int = 1,
+        schemaVersion: Int = 3,
         beforeSnapshot: Data?,
         afterSnapshot: Data?,
         source: String = "user"

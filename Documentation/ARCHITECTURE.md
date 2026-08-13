@@ -25,9 +25,9 @@ TerminatorTestSupport ──> TerminatorCore
 
 `TerminatorCore` imports Foundation only. It owns domain values and async `Sendable` protocols, never platform frameworks or persistent model types.
 
-`TerminatorPersistence` owns SwiftData records and mapping. `HostRecord`, `CredentialRecord`, and `ChangeRecord` are implementation details and never cross its public boundary.
+`TerminatorPersistence` owns SwiftData records and mapping. `HostRecord`, `CredentialRecord`, `IdentityRecord`, and `ChangeRecord` are implementation details and never cross its public boundary.
 
-`TerminatorSecurity` owns Keychain queries. Callers address secrets by opaque `SecretID`; they do not know Keychain service/account details.
+`TerminatorSecurity` owns Keychain queries, software-key codecs, Secure Enclave key creation, system authorization, and authentication resolution. Callers address secrets by opaque `SecretID`; they do not know Keychain service/account details.
 
 `TerminatorFeatures` owns SwiftUI views and the `@MainActor @Observable` application model. Views do not fetch SwiftData records or call Security APIs directly.
 
@@ -40,14 +40,20 @@ The app target constructs concrete actors and injects them through protocol exis
 3. A repository actor validates the domain value again, writes the current record, appends a redacted history record, and saves one SwiftData context transaction.
 4. The application model reloads domain values and Observation updates affected views.
 
-Credential creation is a small compensating transaction:
+Secret creation is a small compensating transaction:
 
-1. Create a new immutable `SecretID`.
-2. Write secret bytes to Keychain.
-3. Persist only `CredentialMetadata` and its `SecretID`.
-4. If metadata persistence fails, purge the just-created Keychain item.
+1. Create a new immutable `SecretID` for access-key private material, a saved passphrase, or an embedded password.
+2. Write secret bytes to Keychain; a saved key passphrase receives a separate `SecretID`.
+3. Persist only typed access-key `CredentialMetadata`, public key data, fingerprints, and opaque identifiers. Identity and Host password methods contain only the opaque `SecretID`.
+4. If any later write fails, purge every item created by the operation.
 
-Existing secret items are never overwritten. Replacing a secret creates a new credential version, allowing older Keychain items to remain available until manual cleanup.
+Existing secret items are never overwritten. Replacing a secret allocates new identifiers, allowing older Keychain items to remain available until manual cleanup. Multi-item purge first reads a compensating backup and restores removed items if any Keychain or metadata step fails.
+
+## Authentication model
+
+`IdentityProfile` owns a name, username, and a non-empty ordered list of authentication methods. `HostAuthentication` selects either a complete Identity or a manual username plus the same ordered method model; Identity mode has no host-level overrides. A method is either one embedded password reference or an access-key Credential reference. Validation permits at most one password and any number of unique access keys, so passwords never need labels or appear in the global Credentials catalog.
+
+`AuthenticationResolver` turns a Host into an ordered list of safe handles. It resolves an embedded password directly by `SecretID`, reads saved key passphrases from their own Keychain items, and asks for unsaved passphrases once per resolution. The resolver has no cross-connection passphrase cache. Network SSH remains a separate transport adapter and must not advertise an authentication method until that adapter can sign with it.
 
 ## History semantics
 
@@ -55,7 +61,7 @@ Existing secret items are never overwritten. Replacing a secret creates a new cr
 - Every change contains a schema version and redacted before/after JSON snapshots.
 - Revert applies the selected `beforeSnapshot` as a new current value and appends `.restored`.
 - Reverting creation produces a soft-deleted current record rather than erasing it.
-- Secret bytes are structurally impossible to serialize because domain credential metadata contains only `SecretID` and public metadata.
+- Secret bytes are structurally impossible to serialize because authentication methods and credential metadata contain only `SecretID` and public metadata.
 - `.purged` is not revertible because history cannot reconstruct deleted Keychain bytes.
 
 Future schema changes must add version-aware snapshot decoders before changing the stored domain encoding.

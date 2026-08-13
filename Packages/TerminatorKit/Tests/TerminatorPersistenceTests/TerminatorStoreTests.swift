@@ -1,7 +1,8 @@
 import Foundation
+import SwiftData
 import Testing
 import TerminatorCore
-import TerminatorPersistence
+@testable import TerminatorPersistence
 
 @Suite("Persistent catalog", .serialized)
 struct TerminatorStoreTests {
@@ -35,6 +36,8 @@ struct TerminatorStoreTests {
         let container = try TerminatorSchema.makeContainer(inMemory: true)
         let store = TerminatorStore(modelContainer: container)
         let credentialID = UUID()
+        let legacyPassword = CredentialMetadata(id: credentialID, label: "Lab password", kind: .password)
+        try await store.saveCredential(legacyPassword)
         let host = HostProfile(
             displayName: "Lab",
             hostname: "lab.local",
@@ -46,14 +49,28 @@ struct TerminatorStoreTests {
 
         let archived = try #require(try await store.host(id: host.id))
         #expect(archived.isDeleted)
-        #expect(archived.credentialID == credentialID)
+        #expect(archived.credentialID == nil)
+        #expect(archived.authentication.authenticationMethods == [.password(secretID: legacyPassword.secretID)])
     }
 
     @Test("Credential history never contains secret bytes")
     func historyRedactsSecretBytes() async throws {
         let container = try TerminatorSchema.makeContainer(inMemory: true)
         let store = TerminatorStore(modelContainer: container)
-        let credential = CredentialMetadata(label: "Deploy key", kind: .privateKey)
+        let secretID = SecretID()
+        let credential = CredentialMetadata(
+            label: "Deploy key",
+            kind: .accessKey,
+            secretID: secretID,
+            accessKey: AccessKeyMetadata(
+                algorithm: .ed25519,
+                backend: .software,
+                origin: .generated,
+                publicKey: "ssh-ed25519 bW9jaw==",
+                fingerprint: "SHA256:mock",
+                privateMaterialID: secretID
+            )
+        )
         try await store.saveCredential(credential)
 
         let entry = try #require(try await store.listHistory(entity: .credential).first)
@@ -98,5 +115,146 @@ struct TerminatorStoreTests {
         let restored = try #require(try await store.credential(id: credential.id))
         #expect(restored.secretPurgedAt != nil)
         #expect(!restored.isSecretAvailable)
+    }
+
+    @Test("Identity references are validated and prevent destructive archive")
+    func identityReferences() async throws {
+        let container = try TerminatorSchema.makeContainer(inMemory: true)
+        let store = TerminatorStore(modelContainer: container)
+        let credential = CredentialMetadata(label: "Password", kind: .password)
+        try await store.saveCredential(credential)
+        let identity = IdentityProfile(name: "Production", username: "deploy", credentialIDs: [credential.id])
+        try await store.saveIdentity(identity)
+        let host = HostProfile(displayName: "Prod", hostname: "prod.example.com", authentication: .identity(identity.id))
+        try await store.saveHost(host)
+
+        await #expect(throws: PersistenceError.identityInUse) { try await store.deleteIdentity(id: identity.id) }
+        await #expect(throws: PersistenceError.credentialInUse) { try await store.deleteCredential(id: credential.id) }
+        let entries = try await store.listHistory(entity: .identity)
+        #expect(entries.count == 1)
+        #expect(entries.first?.schemaVersion == 3)
+    }
+
+    @Test("Versioned schema migrates a v1 host and key to v3")
+    func migratesVersionOneStore() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "TerminatorMigration-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appending(path: "Terminator.store")
+        let credentialID = UUID()
+        let secretID = UUID()
+        let hostID = UUID()
+
+        do {
+            let schema = Schema(versionedSchema: TerminatorSchemaV1.self)
+            let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let context = ModelContext(container)
+            context.insert(TerminatorSchemaV1.CredentialRecord(
+                id: credentialID,
+                label: "Legacy key",
+                kindRawValue: "privateKey",
+                secretID: secretID,
+                fingerprint: nil,
+                createdAt: .now,
+                updatedAt: .now,
+                deletedAt: nil,
+                secretPurgedAt: nil
+            ))
+            context.insert(TerminatorSchemaV1.HostRecord(
+                id: hostID,
+                displayName: "Legacy host",
+                hostname: "legacy.example.com",
+                port: 22,
+                username: "deploy",
+                group: nil,
+                tags: [],
+                notes: "",
+                credentialID: credentialID,
+                createdAt: .now,
+                updatedAt: .now,
+                deletedAt: nil
+            ))
+            try context.save()
+        }
+
+        let schema = Schema(versionedSchema: TerminatorSchemaV3.self)
+        let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+        let container = try ModelContainer(
+            for: schema,
+            migrationPlan: TerminatorMigrationPlan.self,
+            configurations: [configuration]
+        )
+        let store = TerminatorStore(modelContainer: container)
+        let host = try #require(try await store.host(id: hostID))
+        let credential = try #require(try await store.credential(id: credentialID))
+        #expect(host.authentication == .manual(
+            username: "deploy",
+            authenticationMethods: [.accessKey(credentialID: credentialID)]
+        ))
+        #expect(credential.kind == .accessKey)
+        #expect(credential.accessKey?.compatibility == .needsUpgrade)
+        #expect(credential.accessKey?.privateMaterialID.rawValue == secretID)
+    }
+
+    @Test("Versioned schema migrates v2 password references into embedded methods")
+    func migratesVersionTwoStore() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "TerminatorMigrationV2-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appending(path: "Terminator.store")
+        let passwordID = UUID()
+        let passwordSecretID = UUID()
+        let identityID = UUID()
+        let hostID = UUID()
+
+        do {
+            let schema = Schema(versionedSchema: TerminatorSchemaV2.self)
+            let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let context = ModelContext(container)
+
+            let password = TerminatorSchemaV2.CredentialRecord()
+            password.id = passwordID
+            password.label = "Legacy password"
+            password.kindRawValue = "password"
+            password.secretID = passwordSecretID
+            context.insert(password)
+
+            let identity = TerminatorSchemaV2.IdentityRecord()
+            identity.id = identityID
+            identity.name = "Legacy identity"
+            identity.username = "deploy"
+            identity.credentialIDs = [passwordID]
+            context.insert(identity)
+
+            let host = TerminatorSchemaV2.HostRecord()
+            host.id = hostID
+            host.displayName = "Legacy manual host"
+            host.hostname = "legacy.example.com"
+            host.username = "root"
+            host.credentialIDs = [passwordID]
+            context.insert(host)
+            try context.save()
+        }
+
+        let schema = Schema(versionedSchema: TerminatorSchemaV3.self)
+        let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+        let container = try ModelContainer(
+            for: schema,
+            migrationPlan: TerminatorMigrationPlan.self,
+            configurations: [configuration]
+        )
+        let store = TerminatorStore(modelContainer: container)
+        let identity = try #require(try await store.identity(id: identityID))
+        let host = try #require(try await store.host(id: hostID))
+
+        #expect(identity.authenticationMethods == [.password(secretID: SecretID(rawValue: passwordSecretID))])
+        #expect(host.authentication == .manual(
+            username: "root",
+            authenticationMethods: [.password(secretID: SecretID(rawValue: passwordSecretID))]
+        ))
     }
 }
