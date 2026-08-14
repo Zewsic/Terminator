@@ -11,6 +11,7 @@
 		A10000000000000000000002 /* TerminatorPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* TerminatorPersistence */; };
 		A10000000000000000000003 /* TerminatorSecurity in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000003 /* TerminatorSecurity */; };
 		A10000000000000000000004 /* TerminatorFeatures in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000004 /* TerminatorFeatures */; };
+		A10000000000000000000005 /* TerminatorSSH in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000005 /* TerminatorSSH */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +45,7 @@
 				A10000000000000000000002 /* TerminatorPersistence in Frameworks */,
 				A10000000000000000000003 /* TerminatorSecurity in Frameworks */,
 				A10000000000000000000004 /* TerminatorFeatures in Frameworks */,
+				A10000000000000000000005 /* TerminatorSSH in Frameworks */,
 			);
 		};
 		D00000000000000000000130 /* Frameworks */ = {
@@ -95,6 +97,7 @@
 				000000000000000120000000 /* Sources */,
 				000000000000000130000000 /* Frameworks */,
 				000000000000000140000000 /* Resources */,
+				A40000000000000000000001 /* Embed Direct attach helper */,
 			);
 			buildRules = (
 			);
@@ -107,6 +110,7 @@
 				A20000000000000000000002 /* TerminatorPersistence */,
 				A20000000000000000000003 /* TerminatorSecurity */,
 				A20000000000000000000004 /* TerminatorFeatures */,
+				A20000000000000000000005 /* TerminatorSSH */,
 			);
 			productName = Terminator;
 			productReference = 000000000000000000000120 /* Terminator.app */;
@@ -197,6 +201,25 @@
 			);
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		A40000000000000000000001 /* Embed Direct attach helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Direct attach helper";
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/terminator-attach",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/zsh;
+			shellScript = "if [[ \"$SWIFT_ACTIVE_COMPILATION_CONDITIONS\" == *\"APP_STORE\"* ]]; then\n  rm -f \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"\n  exit 0\nfi\nhelper_configuration=debug\nif [[ \"$CONFIGURATION\" == Release* ]]; then helper_configuration=release; fi\ncd \"$SRCROOT/Packages/TerminatorKit\"\n/usr/bin/env swift build --disable-sandbox --product terminator-attach --configuration \"$helper_configuration\"\nmkdir -p \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"\ncp \"$SRCROOT/Packages/TerminatorKit/.build/$helper_configuration/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"\nchmod 755 \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		000000000000000120000000 /* Sources */ = {
@@ -639,6 +662,10 @@
 		A20000000000000000000004 /* TerminatorFeatures */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TerminatorFeatures;
+		};
+		A20000000000000000000005 /* TerminatorSSH */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TerminatorSSH;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

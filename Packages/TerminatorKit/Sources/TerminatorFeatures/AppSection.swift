@@ -9,6 +9,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case credentials
     case snippets
     case history
+    case logs
 
     public var id: String { rawValue }
 
@@ -22,6 +23,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         case .credentials: "Credentials"
         case .snippets: "Snippets"
         case .history: "History"
+        case .logs: "Logs"
         }
     }
 
@@ -35,6 +37,7 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         case .credentials: "key"
         case .snippets: "chevron.left.forwardslash.chevron.right"
         case .history: "clock.arrow.trianglehead.counterclockwise.rotate.90"
+        case .logs: "text.document"
         }
     }
 

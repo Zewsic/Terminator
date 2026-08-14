@@ -198,6 +198,60 @@ struct TerminatorStoreTests {
         #expect(credential.accessKey?.privateMaterialID.rawValue == secretID)
     }
 
+    @Test("Known hosts retain multiple algorithms for one endpoint")
+    func multipleKnownHostAlgorithms() async throws {
+        let container = try TerminatorSchema.makeContainer(inMemory: true)
+        let store = TerminatorStore(modelContainer: container)
+        let endpoint = "server.example.com"
+        try await store.saveKnownHost(.init(
+            endpoint: endpoint, algorithm: "ssh-ed25519", publicKey: Data([1]), fingerprint: "SHA256:one"
+        ))
+        try await store.saveKnownHost(.init(
+            endpoint: endpoint, algorithm: "rsa-sha2-512", publicKey: Data([2]), fingerprint: "SHA256:two"
+        ))
+
+        #expect(try await store.knownHosts(endpoint: endpoint).count == 2)
+        #expect(try await store.knownHost(endpoint: endpoint, algorithm: "ssh-ed25519")?.fingerprint == "SHA256:one")
+        try await store.removeKnownHost(endpoint: endpoint, algorithm: "ssh-ed25519")
+        #expect(try await store.knownHosts(endpoint: endpoint).map(\.algorithm) == ["rsa-sha2-512"])
+    }
+
+    @Test("Versioned schema migrates the single-key V4 known host to V5")
+    func migratesVersionFourKnownHost() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "TerminatorV4Migration-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let storeURL = directory.appending(path: "Terminator.store")
+        let endpoint = "legacy.example.com"
+
+        do {
+            let schema = Schema(versionedSchema: TerminatorSchemaV4.self)
+            let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            let context = ModelContext(container)
+            context.insert(TerminatorSchemaV4.KnownHostRecord(
+                endpoint: endpoint, id: UUID(), algorithm: "ssh-ed25519",
+                publicKey: Data([1, 2, 3]), fingerprint: "SHA256:legacy",
+                createdAt: .now, updatedAt: .now
+            ))
+            try context.save()
+        }
+
+        let schema = Schema(versionedSchema: TerminatorSchemaV5.self)
+        let configuration = ModelConfiguration("Terminator", schema: schema, url: storeURL, allowsSave: true)
+        let container = try ModelContainer(
+            for: schema, migrationPlan: TerminatorMigrationPlan.self, configurations: [configuration]
+        )
+        let store = TerminatorStore(modelContainer: container)
+        #expect(try await store.knownHost(endpoint: endpoint, algorithm: "ssh-ed25519")?.fingerprint == "SHA256:legacy")
+
+        try await store.saveKnownHost(.init(
+            endpoint: endpoint, algorithm: "rsa-sha2-512", publicKey: Data([4]), fingerprint: "SHA256:new"
+        ))
+        #expect(try await store.knownHosts(endpoint: endpoint).count == 2)
+    }
+
     @Test("Versioned schema migrates v2 password references into embedded methods")
     func migratesVersionTwoStore() async throws {
         let directory = FileManager.default.temporaryDirectory

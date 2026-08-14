@@ -1,11 +1,13 @@
 import Foundation
 import TerminatorCore
 
-public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository {
+public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository {
     private var hosts: [UUID: HostProfile]
     private var credentials: [UUID: CredentialMetadata]
     private var identities: [UUID: IdentityProfile]
     private var history: [HistoryEntry]
+    private var knownHosts: [String: KnownHostKey]
+    private var sessionLogs: [UUID: SessionLogMetadata]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
 
@@ -13,12 +15,16 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         hosts: [HostProfile] = [],
         credentials: [CredentialMetadata] = [],
         identities: [IdentityProfile] = [],
-        history: [HistoryEntry] = []
+        history: [HistoryEntry] = [],
+        knownHosts: [KnownHostKey] = [],
+        sessionLogs: [SessionLogMetadata] = []
     ) {
         self.hosts = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
         self.credentials = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
         self.identities = Dictionary(uniqueKeysWithValues: identities.map { ($0.id, $0) })
         self.history = history
+        self.knownHosts = Dictionary(uniqueKeysWithValues: knownHosts.map { (Self.knownHostKey($0.endpoint, $0.algorithm), $0) })
+        self.sessionLogs = Dictionary(uniqueKeysWithValues: sessionLogs.map { ($0.id, $0) })
     }
 
     public func listHosts(includeDeleted: Bool) -> [HostProfile] {
@@ -144,6 +150,25 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         }
     }
 
+    public func knownHosts(endpoint: String) -> [KnownHostKey] {
+        knownHosts.values.filter { $0.endpoint == endpoint }.sorted { $0.algorithm < $1.algorithm }
+    }
+    public func saveKnownHost(_ key: KnownHostKey) {
+        knownHosts[Self.knownHostKey(key.endpoint, key.algorithm)] = key
+    }
+    public func removeKnownHost(endpoint: String, algorithm: String?) {
+        knownHosts = knownHosts.filter { _, key in
+            key.endpoint != endpoint || (algorithm != nil && key.algorithm != algorithm)
+        }
+    }
+
+    public func listSessionLogs() -> [SessionLogMetadata] {
+        sessionLogs.values.sorted { $0.startedAt > $1.startedAt }
+    }
+    public func sessionLog(id: UUID) -> SessionLogMetadata? { sessionLogs[id] }
+    public func saveSessionLog(_ log: SessionLogMetadata) { sessionLogs[log.id] = log }
+    public func deleteSessionLog(id: UUID) { sessionLogs[id] = nil }
+
     private func entry<Value: Encodable>(
         entity: HistoryEntity,
         id: UUID,
@@ -159,16 +184,22 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
             afterSnapshot: try after.map(encoder.encode)
         )
     }
+
+    private static func knownHostKey(_ endpoint: String, _ algorithm: String) -> String {
+        endpoint.lowercased() + "\u{1f}" + algorithm.lowercased()
+    }
 }
 
 public actor InMemorySecretStore: SecretStore {
     private var values: [SecretID: Data] = [:]
+    private var accessPolicies: [SecretID: SecretAccessPolicy] = [:]
 
     public init() {}
 
-    public func store(_ secret: Data, for id: SecretID) throws {
+    public func store(_ secret: Data, for id: SecretID, access: SecretAccessPolicy) throws {
         guard values[id] == nil else { throw InMemorySecretError.duplicate }
         values[id] = secret
+        accessPolicies[id] = access
     }
 
     public func read(id: SecretID) throws -> Data {
@@ -176,7 +207,12 @@ public actor InMemorySecretStore: SecretStore {
         return value
     }
 
-    public func purge(id: SecretID) { values[id] = nil }
+    public func accessPolicy(id: SecretID) -> SecretAccessPolicy? { accessPolicies[id] }
+
+    public func purge(id: SecretID) {
+        values[id] = nil
+        accessPolicies[id] = nil
+    }
 }
 
 public enum InMemorySecretError: Error, Sendable {

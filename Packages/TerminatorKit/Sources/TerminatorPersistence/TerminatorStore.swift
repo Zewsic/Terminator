@@ -16,22 +16,22 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .hostNotFound: "The host no longer exists."
-        case .credentialNotFound: "The credential no longer exists."
-        case .identityNotFound: "The identity no longer exists."
-        case .historyEntryNotFound: "The history entry no longer exists."
-        case .unsupportedHistorySchema(let version): "History schema version \(version) is not supported."
-        case .secretPurgeIsIrreversible: "Purged secret material cannot be restored."
-        case .credentialInUse: "Detach this credential from every identity and host before archiving it."
-        case .identityInUse: "Detach this identity from every host before archiving it."
-        case .referencedCredentialUnavailable: "A referenced credential is unavailable."
-        case .referencedIdentityUnavailable: "The selected identity is unavailable."
+        case .hostNotFound: TerminatorCoreLocalization.text("error.store.hostNotFound")
+        case .credentialNotFound: TerminatorCoreLocalization.text("error.store.credentialNotFound")
+        case .identityNotFound: TerminatorCoreLocalization.text("error.store.identityNotFound")
+        case .historyEntryNotFound: TerminatorCoreLocalization.text("error.store.historyEntryNotFound")
+        case .unsupportedHistorySchema(let version): TerminatorCoreLocalization.text("error.store.unsupportedHistorySchema", version)
+        case .secretPurgeIsIrreversible: TerminatorCoreLocalization.text("error.store.secretPurgeIsIrreversible")
+        case .credentialInUse: TerminatorCoreLocalization.text("error.store.credentialInUse")
+        case .identityInUse: TerminatorCoreLocalization.text("error.store.identityInUse")
+        case .referencedCredentialUnavailable: TerminatorCoreLocalization.text("error.store.referencedCredentialUnavailable")
+        case .referencedIdentityUnavailable: TerminatorCoreLocalization.text("error.store.referencedIdentityUnavailable")
         }
     }
 }
 
 @ModelActor
-public actor TerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository {
+public actor TerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository {
     private var encoder: JSONEncoder { JSONEncoder() }
     private var decoder: JSONDecoder { JSONDecoder() }
 
@@ -85,6 +85,66 @@ public actor TerminatorStore: HostRepository, CredentialRepository, IdentityRepo
         record.apply(after)
         try appendHistory(entity: .host, entityID: id, operation: .restored, before: before, after: after)
         try modelContext.save()
+    }
+
+    public func knownHosts(endpoint: String) throws -> [KnownHostKey] {
+        let descriptor = FetchDescriptor<KnownHostRecord>(predicate: #Predicate { $0.endpoint == endpoint })
+        let records = try modelContext.fetch(descriptor)
+        let needsMigration = records.contains { $0.lookupKey == nil }
+        for record in records { record.populateLookupKeyIfNeeded() }
+        if needsMigration { try modelContext.save() }
+        return records.map(\.domain)
+            .sorted { $0.algorithm < $1.algorithm }
+    }
+
+    public func saveKnownHost(_ key: KnownHostKey) throws {
+        let algorithm = key.algorithm
+        var descriptor = FetchDescriptor<KnownHostRecord>(
+            predicate: #Predicate { $0.endpoint == key.endpoint && $0.algorithm == algorithm }
+        )
+        descriptor.fetchLimit = 1
+        if let record = try modelContext.fetch(descriptor).first { record.apply(key) }
+        else { modelContext.insert(KnownHostRecord(key: key)) }
+        try modelContext.save()
+    }
+
+    public func removeKnownHost(endpoint: String, algorithm: String?) throws {
+        let records = try modelContext.fetch(
+            FetchDescriptor<KnownHostRecord>(predicate: #Predicate { $0.endpoint == endpoint })
+        )
+        for record in records where algorithm == nil || record.algorithm == algorithm {
+            modelContext.delete(record)
+        }
+        if !records.isEmpty { try modelContext.save() }
+    }
+
+    public func listSessionLogs() throws -> [SessionLogMetadata] {
+        try modelContext.fetch(FetchDescriptor<SessionLogRecord>())
+            .map(\.domain)
+            .sorted { $0.startedAt > $1.startedAt }
+    }
+
+    public func sessionLog(id: UUID) throws -> SessionLogMetadata? {
+        var descriptor = FetchDescriptor<SessionLogRecord>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first?.domain
+    }
+
+    public func saveSessionLog(_ log: SessionLogMetadata) throws {
+        var descriptor = FetchDescriptor<SessionLogRecord>(predicate: #Predicate { $0.id == log.id })
+        descriptor.fetchLimit = 1
+        if let record = try modelContext.fetch(descriptor).first { record.apply(log) }
+        else { modelContext.insert(SessionLogRecord(log: log)) }
+        try modelContext.save()
+    }
+
+    public func deleteSessionLog(id: UUID) throws {
+        var descriptor = FetchDescriptor<SessionLogRecord>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        if let record = try modelContext.fetch(descriptor).first {
+            modelContext.delete(record)
+            try modelContext.save()
+        }
     }
 
     public func listCredentials(includeDeleted: Bool = false) throws -> [CredentialMetadata] {

@@ -7,6 +7,40 @@ import TerminatorTestSupport
 @MainActor
 @Suite("Application model")
 struct TerminatorAppModelTests {
+    @Test("OpenSSH host matching compares endpoint and update preserves authentication")
+    func openSSHHostComparisonAndUpdate() async throws {
+        let keyID = UUID()
+        let passwordID = SecretID()
+        let existing = HostProfile(
+            displayName: "Old alias", hostname: "SERVER.EXAMPLE.COM.", port: 2222,
+            authentication: .manual(username: "deploy", authenticationMethods: [
+                .password(secretID: passwordID), .accessKey(credentialID: keyID),
+            ])
+        )
+        let catalog = InMemoryTerminatorStore(hosts: [existing])
+        let model = TerminatorAppModel(
+            capabilities: .direct,
+            hostRepository: catalog, credentialRepository: catalog,
+            identityRepository: catalog, historyRepository: catalog,
+            secretStore: InMemorySecretStore(), accessKeyService: MockAccessKeyService(),
+            userPresenceAuthorizer: AllowingUserPresenceAuthorizer(),
+            dockerService: MockDockerService(containers: []),
+            openSSHService: MockOpenSSHIntegrationService()
+        )
+        await model.load()
+        let discovered = DiscoveredSSHHost(
+            alias: "New alias", hostname: "server.example.com", port: 2222,
+            username: "DEPLOY", sourceURL: URL(fileURLWithPath: "/tmp/config")
+        )
+
+        #expect(model.matchingHost(for: discovered)?.id == existing.id)
+        #expect(await model.importHost(discovered, credentialIDs: []))
+        let updated = try #require(model.hosts.first)
+        #expect(updated.id == existing.id)
+        #expect(updated.displayName == "New alias")
+        #expect(updated.authentication.authenticationMethods == existing.authentication.authenticationMethods)
+    }
+
     @Test("Host and access key names are inferred when omitted")
     func inferredNames() async throws {
         let catalog = InMemoryTerminatorStore()
@@ -76,6 +110,76 @@ struct TerminatorAppModelTests {
         let hostSecretID = try #require(savedHost.authentication.authenticationMethods.first?.passwordSecretID)
         #expect(try await secrets.read(id: hostSecretID) == Data("host-secret".utf8))
         #expect(model.credentials.isEmpty)
+    }
+
+    @Test("Encrypted access keys support prompt, automatic, and Touch ID modes")
+    func encryptedKeyPassphraseModes() async throws {
+        let encrypted = Data("encrypted-private-key".utf8)
+        let clear = Data("clear-private-key".utf8)
+        let prepared = PreparedAccessKey(
+            privateMaterial: encrypted,
+            algorithm: .ed25519,
+            backend: .software,
+            publicKey: "ssh-ed25519 bW9jaw==",
+            fingerprint: "SHA256:mock",
+            isPassphraseProtected: true
+        )
+
+        func makeModel(
+            catalog: InMemoryTerminatorStore,
+            secrets: InMemorySecretStore
+        ) -> TerminatorAppModel {
+            TerminatorAppModel(
+                capabilities: .direct,
+                hostRepository: catalog,
+                credentialRepository: catalog,
+                identityRepository: catalog,
+                historyRepository: catalog,
+                secretStore: secrets,
+                accessKeyService: MockAccessKeyService(
+                    preparedKey: prepared,
+                    exportedPrivateMaterial: clear
+                ),
+                userPresenceAuthorizer: AllowingUserPresenceAuthorizer(),
+                dockerService: MockDockerService(containers: [])
+            )
+        }
+
+        let promptCatalog = InMemoryTerminatorStore()
+        let promptSecrets = InMemorySecretStore()
+        let promptModel = makeModel(catalog: promptCatalog, secrets: promptSecrets)
+        var promptDraft = AccessKeyDraft()
+        promptDraft.mode = .importExisting
+        promptDraft.privateKey = "encrypted"
+        let promptID = try #require(await promptModel.saveAccessKey(promptDraft))
+        let promptKey = try #require(promptModel.credentials.first { $0.id == promptID }?.accessKey)
+        #expect(promptKey.passphraseProtection == .promptEveryConnection)
+        #expect(try await promptSecrets.read(id: promptKey.privateMaterialID) == encrypted)
+
+        let automaticCatalog = InMemoryTerminatorStore()
+        let automaticSecrets = InMemorySecretStore()
+        let automaticModel = makeModel(catalog: automaticCatalog, secrets: automaticSecrets)
+        var automaticDraft = promptDraft
+        automaticDraft.id = UUID()
+        automaticDraft.passphrase = "phrase"
+        automaticDraft.passphraseConfirmation = "phrase"
+        let automaticID = try #require(await automaticModel.saveAccessKey(automaticDraft))
+        let automaticKey = try #require(automaticModel.credentials.first { $0.id == automaticID }?.accessKey)
+        #expect(automaticKey.passphraseProtection == .none)
+        #expect(try await automaticSecrets.read(id: automaticKey.privateMaterialID) == clear)
+
+        let touchIDCatalog = InMemoryTerminatorStore()
+        let touchIDSecrets = InMemorySecretStore()
+        let touchIDModel = makeModel(catalog: touchIDCatalog, secrets: touchIDSecrets)
+        var touchIDDraft = automaticDraft
+        touchIDDraft.id = UUID()
+        touchIDDraft.savePassphrase = true
+        let touchIDCredentialID = try #require(await touchIDModel.saveAccessKey(touchIDDraft))
+        let touchIDKey = try #require(touchIDModel.credentials.first { $0.id == touchIDCredentialID }?.accessKey)
+        let passphraseID = try #require(touchIDKey.passphraseProtection.savedSecretID)
+        #expect(try await touchIDSecrets.read(id: touchIDKey.privateMaterialID) == encrypted)
+        #expect(try await touchIDSecrets.read(id: passphraseID) == Data("phrase".utf8))
+        #expect(await touchIDSecrets.accessPolicy(id: passphraseID) == .userPresence)
     }
 
     @Test("Replacing an access key allocates new secrets and history restores old handles")

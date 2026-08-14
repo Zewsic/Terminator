@@ -163,30 +163,82 @@ public enum TerminatorSchemaV3: VersionedSchema {
     ] }
 }
 
+public enum TerminatorSchemaV4: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(4, 0, 0)
+    public static var models: [any PersistentModel.Type] { [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        TerminatorSchemaV4.KnownHostRecord.self,
+        SessionLogRecord.self,
+    ] }
+
+    // V4 shipped with one server key per endpoint. Keep this exact model frozen:
+    // changing a type referenced by an old VersionedSchema makes existing stores
+    // unrecognizable before a migration can even begin.
+    @Model final class KnownHostRecord {
+        @Attribute(.unique) var endpoint: String
+        var id: UUID
+        var algorithm: String
+        var publicKey: Data
+        var fingerprint: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        init(
+            endpoint: String, id: UUID, algorithm: String, publicKey: Data,
+            fingerprint: String, createdAt: Date, updatedAt: Date
+        ) {
+            self.endpoint = endpoint; self.id = id; self.algorithm = algorithm
+            self.publicKey = publicKey; self.fingerprint = fingerprint
+            self.createdAt = createdAt; self.updatedAt = updatedAt
+        }
+    }
+}
+
+public enum TerminatorSchemaV5: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(5, 0, 0)
+    public static var models: [any PersistentModel.Type] { [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        KnownHostRecord.self,
+        SessionLogRecord.self,
+    ] }
+}
+
 public enum TerminatorMigrationPlan: SchemaMigrationPlan {
     public static var schemas: [any VersionedSchema.Type] {
-        [TerminatorSchemaV1.self, TerminatorSchemaV2.self, TerminatorSchemaV3.self]
+        [
+            TerminatorSchemaV1.self, TerminatorSchemaV2.self, TerminatorSchemaV3.self,
+            TerminatorSchemaV4.self, TerminatorSchemaV5.self,
+        ]
     }
     public static var stages: [MigrationStage] {
         [
             .lightweight(fromVersion: TerminatorSchemaV1.self, toVersion: TerminatorSchemaV2.self),
             .lightweight(fromVersion: TerminatorSchemaV2.self, toVersion: TerminatorSchemaV3.self),
+            .lightweight(fromVersion: TerminatorSchemaV3.self, toVersion: TerminatorSchemaV4.self),
+            .lightweight(fromVersion: TerminatorSchemaV4.self, toVersion: TerminatorSchemaV5.self),
         ]
     }
 }
 
 public enum TerminatorSchema {
-    public static let version3 = Schema(versionedSchema: TerminatorSchemaV3.self)
+    public static let version4 = Schema(versionedSchema: TerminatorSchemaV4.self)
+    public static let version5 = Schema(versionedSchema: TerminatorSchemaV5.self)
 
     public static func makeContainer(inMemory: Bool = false) throws -> ModelContainer {
         let configuration = ModelConfiguration(
             "Terminator",
-            schema: version3,
+            schema: version5,
             isStoredInMemoryOnly: inMemory,
             allowsSave: true
         )
         return try ModelContainer(
-            for: version3,
+            for: version5,
             migrationPlan: TerminatorMigrationPlan.self,
             configurations: [configuration]
         )

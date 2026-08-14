@@ -74,10 +74,18 @@ public actor AppleAccessKeyService: AccessKeyService {
         }
         let header = try OpenSSHCodec.inspectContainer(keyData)
         if header.cipherName != "none" {
-            guard header.cipherName == "aes256-ctr", header.kdfName == "bcrypt" else {
+            guard ["aes256-ctr", "aes256-cbc"].contains(header.cipherName),
+                  header.kdfName == "bcrypt" else {
                 throw AccessKeyServiceError.unsupportedFormat
             }
-            guard !request.passphrase.isEmpty else { throw AccessKeyServiceError.passphraseRequired }
+            if request.passphrase.isEmpty {
+                return try prepareImported(
+                    clearKey: keyData,
+                    storedMaterial: Data(request.privateKey.utf8),
+                    request: request,
+                    isProtected: true
+                )
+            }
             let clearPEM = try OpenSSHCodec.decryptPEM(keyData, passphrase: request.passphrase)
             let clearContainer = try OpenSSHCodec.decodePEM(String(decoding: clearPEM, as: UTF8.self))
             return try prepareImported(
@@ -137,6 +145,17 @@ public actor AppleAccessKeyService: AccessKeyService {
             return try OpenSSHCodec.decryptPEM(container, passphrase: passphrase)
         }
         return privateMaterial
+    }
+
+    public func decodeSoftwareKey(privateMaterial: Data, passphrase: String) throws -> SSHPrivateKeyMaterial {
+        let exported = try exportSoftwareKey(privateMaterial: privateMaterial, passphrase: passphrase)
+        let container: Data
+        if let text = String(data: exported, encoding: .utf8), text.contains("BEGIN") {
+            container = try OpenSSHCodec.decodePEM(text)
+        } else {
+            container = exported
+        }
+        return try OpenSSHCodec.privateMaterial(from: container)
     }
 
     private func prepareImported(
@@ -363,6 +382,53 @@ private enum OpenSSHCodec {
         )
     }
 
+    static func privateMaterial(from data: Data) throws -> SSHPrivateKeyMaterial {
+        let info = try inspectContainer(data)
+        guard info.cipherName == "none" else { throw AccessKeyServiceError.passphraseRequired }
+        var reader = SSHReader(info.privateBlock)
+        guard try reader.readUInt32() == reader.readUInt32() else {
+            throw AccessKeyServiceError.invalidPrivateKey
+        }
+        let name = try reader.readStringText()
+        switch name {
+        case "ssh-ed25519":
+            _ = try reader.readString()
+            let combined = try reader.readString()
+            guard combined.count >= 32 else { throw AccessKeyServiceError.invalidPrivateKey }
+            return .ed25519(seed: Data(combined.prefix(32)))
+        case "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521":
+            let curveName = try reader.readStringText()
+            _ = try reader.readString()
+            let scalar = stripMPIntPadding(try reader.readString())
+            let curve: ECDSACurve
+            switch curveName {
+            case "nistp256": curve = .p256
+            case "nistp384": curve = .p384
+            case "nistp521": curve = .p521
+            default: throw AccessKeyServiceError.unsupportedFormat
+            }
+            return .ecdsa(curve: curve, scalar: scalar)
+        case "ssh-rsa":
+            let modulus = stripMPIntPadding(try reader.readString())
+            let exponent = stripMPIntPadding(try reader.readString())
+            let privateExponent = stripMPIntPadding(try reader.readString())
+            let iqmp = stripMPIntPadding(try reader.readString())
+            let p = stripMPIntPadding(try reader.readString())
+            let q = stripMPIntPadding(try reader.readString())
+            return .rsa(
+                modulus: modulus, exponent: exponent, privateExponent: privateExponent,
+                p: p, q: q, iqmp: iqmp
+            )
+        default:
+            throw AccessKeyServiceError.unsupportedFormat
+        }
+    }
+
+    private static func stripMPIntPadding(_ data: Data) -> Data {
+        guard data.first == 0, data.count > 1 else { return data }
+        return Data(data.dropFirst())
+    }
+
     static func encryptPEM(_ pemData: Data, passphrase: String, rounds: UInt32 = 24) throws -> Data {
         guard !passphrase.isEmpty, let text = String(data: pemData, encoding: .utf8) else {
             throw AccessKeyServiceError.invalidPassphrase
@@ -391,14 +457,25 @@ private enum OpenSSHCodec {
 
     static func decryptPEM(_ container: Data, passphrase: String) throws -> Data {
         let info = try inspectContainer(container)
-        guard info.cipherName == "aes256-ctr", info.kdfName == "bcrypt", !passphrase.isEmpty else {
+        guard ["aes256-ctr", "aes256-cbc"].contains(info.cipherName),
+              info.kdfName == "bcrypt", !passphrase.isEmpty else {
             throw AccessKeyServiceError.unsupportedFormat
         }
         var options = SSHReader(info.kdfOptions)
         let salt = try options.readString()
         let rounds = try options.readUInt32()
         let keyAndIV = try BCryptPBKDF.derive(passphrase: passphrase, salt: salt, rounds: rounds, count: 48)
-        let clear = try AESCTR.crypt(info.privateBlock, key: Data(keyAndIV.prefix(32)), iv: Data(keyAndIV.suffix(16)))
+        let key = Data(keyAndIV.prefix(32))
+        let iv = Data(keyAndIV.suffix(16))
+        let clear: Data
+        switch info.cipherName {
+        case "aes256-ctr":
+            clear = try AESCTR.crypt(info.privateBlock, key: key, iv: iv)
+        case "aes256-cbc":
+            clear = try AESCBC.decrypt(info.privateBlock, key: key, iv: iv)
+        default:
+            throw AccessKeyServiceError.unsupportedFormat
+        }
         do {
             var privateReader = SSHReader(clear)
             guard try privateReader.readUInt32() == privateReader.readUInt32() else {
@@ -684,6 +761,44 @@ private enum AESCTR {
             }
         }
         guard updateStatus == kCCSuccess, moved == input.count else {
+            throw AccessKeyServiceError.invalidPrivateKey
+        }
+        return output
+    }
+}
+
+private enum AESCBC {
+    static func decrypt(_ input: Data, key: Data, iv: Data) throws -> Data {
+        guard key.count == kCCKeySizeAES256,
+              iv.count == kCCBlockSizeAES128,
+              input.count.isMultiple(of: kCCBlockSizeAES128) else {
+            throw AccessKeyServiceError.invalidPrivateKey
+        }
+        var output = Data(count: input.count)
+        let outputCount = output.count
+        var moved = 0
+        let status = output.withUnsafeMutableBytes { outputBuffer in
+            input.withUnsafeBytes { inputBuffer in
+                key.withUnsafeBytes { keyBuffer in
+                    iv.withUnsafeBytes { ivBuffer in
+                        CCCrypt(
+                            CCOperation(kCCDecrypt),
+                            CCAlgorithm(kCCAlgorithmAES),
+                            CCOptions(0),
+                            keyBuffer.baseAddress,
+                            key.count,
+                            ivBuffer.baseAddress,
+                            inputBuffer.baseAddress,
+                            input.count,
+                            outputBuffer.baseAddress,
+                            outputCount,
+                            &moved
+                        )
+                    }
+                }
+            }
+        }
+        guard status == kCCSuccess, moved == input.count else {
             throw AccessKeyServiceError.invalidPrivateKey
         }
         return output

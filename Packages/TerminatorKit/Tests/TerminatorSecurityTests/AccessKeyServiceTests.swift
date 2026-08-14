@@ -43,6 +43,54 @@ struct AccessKeyServiceTests {
         #expect(imported.isPassphraseProtected)
         #expect(imported.publicKey.hasPrefix("ssh-ed25519 "))
 
+        let deferred = try await AppleAccessKeyService().importSoftwareKey(.init(
+            privateKey: pem,
+            suppliedPublicKey: publicKey
+        ))
+        #expect(deferred.algorithm == .ed25519)
+        #expect(deferred.isPassphraseProtected)
+        #expect(deferred.fingerprint == imported.fingerprint)
+
+        await #expect(throws: AccessKeyServiceError.invalidPassphrase) {
+            try await AppleAccessKeyService().importSoftwareKey(.init(privateKey: pem, passphrase: "wrong"))
+        }
+    }
+
+    @Test("Imports an ssh-keygen bcrypt/AES-CBC vector")
+    func importsExternalAESCBCVector() async throws {
+        // Disposable fixture generated specifically for this test with:
+        // ssh-keygen -t ed25519 -N vector-passphrase -C cbc-test -Z aes256-cbc
+        let pem = """
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        b3BlbnNzaC1rZXktdjEAAAAACmFlczI1Ni1jYmMAAAAGYmNyeXB0AAAAGAAAABBdON6LD4
+        Mz3zJnKcPfJitlAAAAGAAAAAEAAAAzAAAAC3NzaC1lZDI1NTE5AAAAIH9llIRLHVGKwclj
+        3u3WYlHg726jcnXgIeggrRJL9L5RAAAAkM0H47B/g3LdJZp/O8bug5mOyGq2Bm2uXnM1yG
+        bNBrDqz7yZD5IU2S2cj9ADrekVwI7s1BC3GEox2L1xcABm0f/rEecTiEGtv0OKB+NfirLW
+        DoupzknYeaneV03Kz1IlLBFRtNjR1t+y1oM2SBYNF+ZvPHbSmFAmL724bPi616bMBi4PxL
+        9MqbboySJkSOI3VQ==
+        -----END OPENSSH PRIVATE KEY-----
+        """
+        let imported = try await AppleAccessKeyService().importSoftwareKey(.init(
+            privateKey: pem,
+            passphrase: "vector-passphrase"
+        ))
+
+        #expect(imported.algorithm == .ed25519)
+        #expect(imported.isPassphraseProtected)
+        #expect(imported.publicKey.hasPrefix("ssh-ed25519 "))
+
+        let deferred = try await AppleAccessKeyService().importSoftwareKey(.init(privateKey: pem))
+        #expect(deferred.algorithm == .ed25519)
+        #expect(deferred.isPassphraseProtected)
+        #expect(deferred.fingerprint == imported.fingerprint)
+
+        await #expect(throws: AccessKeyServiceError.passphraseRequired) {
+            try await AppleAccessKeyService().decodeSoftwareKey(
+                privateMaterial: deferred.privateMaterial,
+                passphrase: ""
+            )
+        }
+
         await #expect(throws: AccessKeyServiceError.invalidPassphrase) {
             try await AppleAccessKeyService().importSoftwareKey(.init(privateKey: pem, passphrase: "wrong"))
         }

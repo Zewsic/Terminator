@@ -21,6 +21,7 @@ public actor MockSSHService: SSHService {
 
 public actor MockAccessKeyService: AccessKeyService {
     public var preparedKey: PreparedAccessKey
+    public var exportedPrivateMaterial: Data?
 
     public init(preparedKey: PreparedAccessKey = PreparedAccessKey(
         privateMaterial: Data("mock-private-key".utf8),
@@ -29,8 +30,9 @@ public actor MockAccessKeyService: AccessKeyService {
         publicKey: "ssh-ed25519 bW9jaw==",
         fingerprint: "SHA256:mock",
         isPassphraseProtected: false
-    )) {
+    ), exportedPrivateMaterial: Data? = nil) {
         self.preparedKey = preparedKey
+        self.exportedPrivateMaterial = exportedPrivateMaterial
     }
 
     public func generateSoftwareKey(_ request: AccessKeyGenerationRequest) -> PreparedAccessKey {
@@ -42,7 +44,7 @@ public actor MockAccessKeyService: AccessKeyService {
 
     public func importSoftwareKey(_ request: AccessKeyImportRequest) -> PreparedAccessKey {
         var result = preparedKey
-        result.isPassphraseProtected = !request.passphrase.isEmpty
+        result.isPassphraseProtected = preparedKey.isPassphraseProtected || !request.passphrase.isEmpty
         return result
     }
 
@@ -53,12 +55,34 @@ public actor MockAccessKeyService: AccessKeyService {
         return result
     }
 
-    public func exportSoftwareKey(privateMaterial: Data, passphrase: String) -> Data { privateMaterial }
+    public func exportSoftwareKey(privateMaterial: Data, passphrase: String) -> Data {
+        exportedPrivateMaterial ?? privateMaterial
+    }
+
+    public func decodeSoftwareKey(privateMaterial: Data, passphrase: String) -> SSHPrivateKeyMaterial {
+        .ed25519(seed: Data(repeating: 1, count: 32))
+    }
 }
 
 public actor AllowingUserPresenceAuthorizer: UserPresenceAuthorizer {
     public init() {}
     public func authorize(reason: String) {}
+}
+
+public actor MockOpenSSHIntegrationService: OpenSSHIntegrationService {
+    public var snapshot: OpenSSHDiscoverySnapshot
+
+    public init(snapshot: OpenSSHDiscoverySnapshot = .init()) { self.snapshot = snapshot }
+
+    public func scan(knownEndpoints: [String]) -> OpenSSHDiscoverySnapshot { snapshot }
+
+    public func hostBlock(for request: OpenSSHHostExportRequest) -> String {
+        "Host \(request.alias)\n    HostName \(request.hostname)\n    User \(request.username)\n"
+    }
+
+    public func comparison(for request: OpenSSHHostExportRequest) -> OpenSSHHostExportComparison? { nil }
+    public func exportHost(_ request: OpenSSHHostExportRequest) {}
+    public func writeKey(_ data: Data, to url: URL, privateKey: Bool, replaceExisting: Bool) {}
 }
 
 public actor MockDockerService: DockerService {

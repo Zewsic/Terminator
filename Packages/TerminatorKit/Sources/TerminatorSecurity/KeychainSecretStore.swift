@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 import TerminatorCore
 
@@ -6,6 +7,7 @@ public enum KeychainSecretStoreError: LocalizedError, Equatable, Sendable {
     case duplicateSecret
     case secretNotFound
     case unexpectedData
+    case accessControlCreationFailed
     case securityStatus(Int32)
 
     public var errorDescription: String? {
@@ -13,7 +15,8 @@ public enum KeychainSecretStoreError: LocalizedError, Equatable, Sendable {
         case .duplicateSecret: "A secret with this identifier already exists."
         case .secretNotFound: "The requested secret is not available."
         case .unexpectedData: "Keychain returned an unexpected value."
-        case .securityStatus(let status): "Keychain operation failed with status \(status)."
+        case .accessControlCreationFailed: "Keychain could not create Touch ID protection for this secret."
+        case .securityStatus(let status): SecurityL10n.text("error.securityStatus", status)
         }
     }
 }
@@ -25,15 +28,30 @@ public actor KeychainSecretStore: SecretStore {
         self.service = service
     }
 
-    public func store(_ secret: Data, for id: SecretID) throws {
-        let query: [String: Any] = [
+    public func store(_ secret: Data, for id: SecretID, access: SecretAccessPolicy) throws {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: id.description,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
             kSecAttrSynchronizable as String: false,
             kSecValueData as String: secret,
         ]
+        switch access {
+        case .deviceOnly:
+            query[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        case .userPresence:
+            var error: Unmanaged<CFError>?
+            guard let control = SecAccessControlCreateWithFlags(
+                nil,
+                kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+                .userPresence,
+                &error
+            ) else {
+                if let error { throw error.takeRetainedValue() }
+                throw KeychainSecretStoreError.accessControlCreationFailed
+            }
+            query[kSecAttrAccessControl as String] = control
+        }
 
         let status = SecItemAdd(query as CFDictionary, nil)
         switch status {
@@ -47,6 +65,8 @@ public actor KeychainSecretStore: SecretStore {
     }
 
     public func read(id: SecretID) throws -> Data {
+        let context = LAContext()
+        context.localizedReason = "Unlock the saved SSH key passphrase"
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -54,6 +74,7 @@ public actor KeychainSecretStore: SecretStore {
             kSecAttrSynchronizable as String: false,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context,
         ]
 
         var result: CFTypeRef?

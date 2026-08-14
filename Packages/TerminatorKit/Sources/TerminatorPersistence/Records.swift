@@ -162,8 +162,8 @@ final class CredentialRecord {
                     algorithm: .ed25519,
                     backend: .software,
                     origin: .migrated,
-                    publicKey: "Legacy key — upgrade required",
-                    fingerprint: fingerprint?.isEmpty == false ? fingerprint! : "Unknown",
+                    publicKey: TerminatorCoreLocalization.text("legacyKey.upgradeRequired"),
+                    fingerprint: fingerprint?.isEmpty == false ? fingerprint! : TerminatorCoreLocalization.text("common.unknown"),
                     privateMaterialID: id,
                     compatibility: .needsUpgrade
                 )
@@ -259,5 +259,92 @@ final class ChangeRecord {
             afterSnapshot: afterSnapshot,
             source: source
         )
+    }
+}
+
+@Model
+final class KnownHostRecord {
+    @Attribute(.unique) var lookupKey: String?
+    var endpoint: String
+    var id: UUID
+    var algorithm: String
+    var publicKey: Data
+    var fingerprint: String
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(key: KnownHostKey) {
+        lookupKey = Self.makeLookupKey(endpoint: key.endpoint, algorithm: key.algorithm)
+        endpoint = key.endpoint; id = key.id; algorithm = key.algorithm
+        publicKey = key.publicKey; fingerprint = key.fingerprint
+        createdAt = key.createdAt; updatedAt = key.updatedAt
+    }
+
+    var domain: KnownHostKey {
+        KnownHostKey(
+            id: id, endpoint: endpoint, algorithm: algorithm, publicKey: publicKey,
+            fingerprint: fingerprint, createdAt: createdAt, updatedAt: updatedAt
+        )
+    }
+
+    func apply(_ key: KnownHostKey) {
+        lookupKey = Self.makeLookupKey(endpoint: key.endpoint, algorithm: key.algorithm)
+        endpoint = key.endpoint
+        id = key.id; algorithm = key.algorithm; publicKey = key.publicKey
+        fingerprint = key.fingerprint; createdAt = key.createdAt; updatedAt = key.updatedAt
+    }
+
+    func populateLookupKeyIfNeeded() {
+        if lookupKey == nil {
+            lookupKey = Self.makeLookupKey(endpoint: endpoint, algorithm: algorithm)
+        }
+    }
+
+    private static func makeLookupKey(endpoint: String, algorithm: String) -> String {
+        endpoint.lowercased() + "\u{1f}" + algorithm.lowercased()
+    }
+}
+
+@Model
+final class SessionLogRecord {
+    @Attribute(.unique) var id: UUID
+    var hostID: UUID
+    var hostDisplayName: String
+    var terminalRawValue: String
+    var startedAt: Date
+    var endedAt: Date?
+    var byteCount: Int64
+    var reconnectCount: Int
+    var stateRawValue: String
+    var isPinned: Bool
+    var relativePath: String
+    var encryptionKeyID: UUID
+
+    init(log: SessionLogMetadata) {
+        id = log.id; hostID = log.hostID; hostDisplayName = log.hostDisplayName
+        terminalRawValue = log.terminal.rawValue; startedAt = log.startedAt; endedAt = log.endedAt
+        byteCount = log.byteCount; reconnectCount = log.reconnectCount
+        stateRawValue = log.state.rawValue; isPinned = log.isPinned
+        relativePath = log.relativePath; encryptionKeyID = log.encryptionKeyID.rawValue
+    }
+
+    var domain: SessionLogMetadata {
+        SessionLogMetadata(
+            id: id, hostID: hostID, hostDisplayName: hostDisplayName,
+            terminal: TerminalApplication(rawValue: terminalRawValue) ?? .other,
+            startedAt: startedAt, endedAt: endedAt, byteCount: byteCount,
+            reconnectCount: reconnectCount,
+            state: SessionLogState(rawValue: stateRawValue) ?? .incomplete,
+            isPinned: isPinned, relativePath: relativePath,
+            encryptionKeyID: SecretID(rawValue: encryptionKeyID)
+        )
+    }
+
+    func apply(_ log: SessionLogMetadata) {
+        hostID = log.hostID; hostDisplayName = log.hostDisplayName
+        terminalRawValue = log.terminal.rawValue; startedAt = log.startedAt; endedAt = log.endedAt
+        byteCount = log.byteCount; reconnectCount = log.reconnectCount
+        stateRawValue = log.state.rawValue; isPinned = log.isPinned
+        relativePath = log.relativePath; encryptionKeyID = log.encryptionKeyID.rawValue
     }
 }

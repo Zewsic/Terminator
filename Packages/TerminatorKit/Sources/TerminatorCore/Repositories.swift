@@ -28,8 +28,44 @@ public protocol HistoryRepository: Sendable {
     func revert(historyEntryID: UUID) async throws
 }
 
+public enum SecretAccessPolicy: Equatable, Sendable {
+    case deviceOnly
+    case userPresence
+}
+
 public protocol SecretStore: Sendable {
-    func store(_ secret: Data, for id: SecretID) async throws
+    func store(_ secret: Data, for id: SecretID, access: SecretAccessPolicy) async throws
     func read(id: SecretID) async throws -> Data
     func purge(id: SecretID) async throws
+}
+
+public extension SecretStore {
+    func store(_ secret: Data, for id: SecretID) async throws {
+        try await store(secret, for: id, access: .deviceOnly)
+    }
+}
+
+public protocol KnownHostRepository: Sendable {
+    func knownHosts(endpoint: String) async throws -> [KnownHostKey]
+    func saveKnownHost(_ key: KnownHostKey) async throws
+    func removeKnownHost(endpoint: String, algorithm: String?) async throws
+}
+
+public extension KnownHostRepository {
+    func knownHost(endpoint: String, algorithm: String? = nil) async throws -> KnownHostKey? {
+        let keys = try await knownHosts(endpoint: endpoint)
+        guard let algorithm else { return keys.first }
+        return keys.first { $0.algorithm == algorithm }
+    }
+
+    func removeKnownHost(endpoint: String) async throws {
+        try await removeKnownHost(endpoint: endpoint, algorithm: nil)
+    }
+}
+
+public protocol SessionLogRepository: Sendable {
+    func listSessionLogs() async throws -> [SessionLogMetadata]
+    func sessionLog(id: UUID) async throws -> SessionLogMetadata?
+    func saveSessionLog(_ log: SessionLogMetadata) async throws
+    func deleteSessionLog(id: UUID) async throws
 }

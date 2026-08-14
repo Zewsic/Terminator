@@ -71,6 +71,7 @@ public protocol AccessKeyService: Sendable {
     func importSoftwareKey(_ request: AccessKeyImportRequest) async throws -> PreparedAccessKey
     func generateSecureEnclaveKey(label: String) async throws -> PreparedAccessKey
     func exportSoftwareKey(privateMaterial: Data, passphrase: String) async throws -> Data
+    func decodeSoftwareKey(privateMaterial: Data, passphrase: String) async throws -> SSHPrivateKeyMaterial
 }
 
 public protocol UserPresenceAuthorizer: Sendable {

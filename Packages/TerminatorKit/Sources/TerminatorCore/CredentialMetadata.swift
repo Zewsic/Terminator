@@ -54,8 +54,8 @@ public enum SSHKeyAlgorithm: Codable, Hashable, Sendable {
     public var displayName: String {
         switch self {
         case .ed25519: "Ed25519"
-        case .ecdsa(let curve): "ECDSA \(curve.displayName)"
-        case .rsa(let bitCount): "RSA \(bitCount)"
+        case .ecdsa(let curve): TerminatorCoreLocalization.text("algorithm.ecdsa", curve.displayName)
+        case .rsa(let bitCount): TerminatorCoreLocalization.text("algorithm.rsa", bitCount)
         }
     }
 
@@ -104,7 +104,7 @@ public enum PassphraseProtection: Codable, Hashable, Sendable {
         switch self {
         case .none: "No passphrase"
         case .promptEveryConnection: "Ask every connection"
-        case .saved: "Saved in Keychain"
+        case .saved: "Touch ID every connection"
         }
     }
 }

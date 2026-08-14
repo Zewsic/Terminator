@@ -4,6 +4,22 @@ import Testing
 
 @Suite("Credential and identity domain")
 struct CredentialIdentityTests {
+    @Test("English localization resources resolve display names, errors, and formats")
+    func englishLocalizationResources() {
+        #expect(CredentialKind.accessKey.displayName == "Access key")
+        #expect(HostValidationError.invalidPort.localizedDescription == "The port must be between 1 and 65535.")
+
+        let entry = HistoryEntry(
+            entity: .credential,
+            entityID: UUID(),
+            operation: .restored,
+            beforeSnapshot: nil,
+            afterSnapshot: nil
+        )
+        #expect(entry.title == "Credential restored")
+        #expect(TerminatorCoreLocalization.text("algorithm.rsa", 4096) == "RSA 4096")
+    }
+
     @Test("Identity preserves authentication order and rejects duplicates")
     func identityValidation() throws {
         let first = UUID()

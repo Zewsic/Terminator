@@ -11,6 +11,14 @@ public final class TerminatorAppModel {
     public private(set) var identities: [IdentityProfile] = []
     public private(set) var history: [HistoryEntry] = []
     public private(set) var containers: [ContainerSummary] = []
+    public private(set) var sessionLogs: [SessionLogMetadata] = []
+    public private(set) var terminalApplications: [TerminalApplication] = [.other]
+    public private(set) var openSSH = OpenSSHDiscoverySnapshot()
+    public private(set) var isScanningOpenSSH = false
+    public var openSSHResultMessage: String?
+    public let connectionPrompts: ConnectionPromptCenter
+    public var connectionHost: HostProfile?
+    public private(set) var connectionPhase: SSHConnectionPhase = .disconnected
     public private(set) var isLoading = false
     public var errorMessage: String?
 
@@ -24,6 +32,12 @@ public final class TerminatorAppModel {
     private let accessKeyService: any AccessKeyService
     private let userPresenceAuthorizer: any UserPresenceAuthorizer
     private let dockerService: any DockerService
+    private let sessionLogRepository: (any SessionLogRepository)?
+    private let externalTerminalService: (any ExternalTerminalConnecting)?
+    private let sessionLogBaseURL: URL?
+    private let sessionLogExporter: (any SessionLogExporting)?
+    private let knownHostRepository: (any KnownHostRepository)?
+    private let openSSHService: (any OpenSSHIntegrationService)?
 
     public init(
         capabilities: AppCapabilities,
@@ -34,7 +48,14 @@ public final class TerminatorAppModel {
         secretStore: any SecretStore,
         accessKeyService: any AccessKeyService,
         userPresenceAuthorizer: any UserPresenceAuthorizer,
-        dockerService: any DockerService
+        dockerService: any DockerService,
+        sessionLogRepository: (any SessionLogRepository)? = nil,
+        externalTerminalService: (any ExternalTerminalConnecting)? = nil,
+        connectionPrompts: ConnectionPromptCenter = ConnectionPromptCenter(),
+        sessionLogBaseURL: URL? = nil,
+        sessionLogExporter: (any SessionLogExporting)? = nil,
+        knownHostRepository: (any KnownHostRepository)? = nil,
+        openSSHService: (any OpenSSHIntegrationService)? = nil
     ) {
         self.capabilities = capabilities
         self.hostRepository = hostRepository
@@ -45,6 +66,13 @@ public final class TerminatorAppModel {
         self.accessKeyService = accessKeyService
         self.userPresenceAuthorizer = userPresenceAuthorizer
         self.dockerService = dockerService
+        self.sessionLogRepository = sessionLogRepository
+        self.externalTerminalService = externalTerminalService
+        self.connectionPrompts = connectionPrompts
+        self.sessionLogBaseURL = sessionLogBaseURL
+        self.sessionLogExporter = sessionLogExporter
+        self.knownHostRepository = knownHostRepository
+        self.openSSHService = openSSHService
     }
 
     public var activeCredentials: [CredentialMetadata] {
@@ -63,9 +91,230 @@ public final class TerminatorAppModel {
             identities = try await identityRepository.listIdentities(includeDeleted: true)
             history = try await historyRepository.listHistory(entity: nil)
             containers = try await dockerService.listContainers()
+            if let sessionLogRepository { sessionLogs = try await sessionLogRepository.listSessionLogs() }
+            if capabilities.externalTerminal, let externalTerminalService {
+                terminalApplications = await externalTerminalService.installedApplications()
+            }
+            if capabilities.externalFileAccess, openSSHService != nil { await refreshOpenSSH() }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    public func refreshOpenSSH() async {
+        guard capabilities.externalFileAccess, let openSSHService else { return }
+        isScanningOpenSSH = true
+        defer { isScanningOpenSSH = false }
+        do {
+            let endpoints = hosts.map { $0.port == 22 ? $0.hostname : "[\($0.hostname)]:\($0.port)" }
+            var snapshot = try await openSSHService.scan(knownEndpoints: endpoints)
+            for index in snapshot.accessKeys.indices
+            where snapshot.accessKeys[index].fingerprint == nil && !snapshot.accessKeys[index].isEncrypted {
+                if let prepared = try? await accessKeyService.importSoftwareKey(.init(
+                    privateKey: snapshot.accessKeys[index].privateKey,
+                    suppliedPublicKey: snapshot.accessKeys[index].publicKey
+                )) {
+                    snapshot.accessKeys[index].fingerprint = prepared.fingerprint
+                    snapshot.accessKeys[index].publicKey = prepared.publicKey
+                }
+            }
+            for index in snapshot.hosts.indices {
+                snapshot.hosts[index].status = matchingHost(for: snapshot.hosts[index]) == nil ? .available : .existing
+            }
+            for index in snapshot.accessKeys.indices {
+                if let fingerprint = snapshot.accessKeys[index].fingerprint,
+                   credentials.contains(where: { $0.accessKey?.fingerprint == fingerprint && !$0.isDeleted }) {
+                    snapshot.accessKeys[index].status = .existing
+                }
+            }
+            if let knownHostRepository {
+                for index in snapshot.knownHosts.indices {
+                    let item = snapshot.knownHosts[index]
+                    let stored = try await knownHostRepository.knownHost(endpoint: item.endpoint, algorithm: item.algorithm)
+                    snapshot.knownHosts[index].status = stored == nil
+                        ? .available
+                        : (stored?.publicKey == item.publicKey ? .existing : .changed)
+                }
+            }
+            openSSH = snapshot
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func matchingHost(for discovered: DiscoveredSSHHost) -> HostProfile? {
+        hosts.first { host in
+            host.hostname.normalizedSSHEndpoint == discovered.hostname.normalizedSSHEndpoint
+                && host.port == discovered.port
+                && resolvedUsername(for: host).caseInsensitiveCompare(discovered.username) == .orderedSame
+        }
+    }
+
+    public func discoveredKey(at url: URL) -> DiscoveredAccessKey? {
+        openSSH.accessKeys.first { $0.privateKeyURL.standardizedFileURL == url.standardizedFileURL }
+    }
+
+    public func draft(for discovered: DiscoveredAccessKey) -> AccessKeyDraft {
+        var draft = AccessKeyDraft()
+        draft.label = discovered.label
+        draft.mode = .importExisting
+        draft.privateKey = discovered.privateKey
+        draft.publicKey = discovered.publicKey
+        return draft
+    }
+
+    public func importKnownHost(_ discovered: DiscoveredKnownHost, replaceChanged: Bool = false) async -> Bool {
+        guard let knownHostRepository else { return false }
+        do {
+            if let stored = try await knownHostRepository.knownHost(
+                endpoint: discovered.endpoint, algorithm: discovered.algorithm
+            ), stored.publicKey != discovered.publicKey, !replaceChanged {
+                errorMessage = "The stored host key differs. Confirm the replacement explicitly."
+                return false
+            }
+            let previous = try await knownHostRepository.knownHost(
+                endpoint: discovered.endpoint, algorithm: discovered.algorithm
+            )
+            try await knownHostRepository.saveKnownHost(.init(
+                id: previous?.id ?? UUID(), endpoint: discovered.endpoint,
+                algorithm: discovered.algorithm, publicKey: discovered.publicKey,
+                fingerprint: discovered.fingerprint, createdAt: previous?.createdAt ?? .now
+            ))
+            openSSHResultMessage = previous == nil ? "Trusted host imported." : "Trusted host updated."
+            await refreshOpenSSH()
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    public func importHost(_ discovered: DiscoveredSSHHost, credentialIDs: [UUID]) async -> Bool {
+        let existing = matchingHost(for: discovered)
+        var methods = existing?.authentication.authenticationMethods ?? []
+        if let identityID = existing?.authentication.identityID,
+           let identity = identities.first(where: { $0.id == identityID }) {
+            methods = identity.authenticationMethods
+        }
+        for id in credentialIDs where !methods.contains(.accessKey(credentialID: id)) {
+            methods.append(.accessKey(credentialID: id))
+        }
+        var draft = HostDraft()
+        draft.id = existing?.id
+        draft.displayName = discovered.alias
+        draft.hostname = discovered.hostname
+        draft.port = discovered.port
+        draft.usesIdentity = false
+        draft.username = discovered.username
+        draft.authenticationMethods = methods.map { method in
+            switch method {
+            case .password(let secretID):
+                IdentityDraftMethod(kind: .password(existingSecretID: secretID))
+            case .accessKey(let credentialID):
+                IdentityDraftMethod(kind: .accessKey(credentialID))
+            }
+        }
+        draft.group = existing?.group ?? ""
+        draft.tagsText = existing?.tags.joined(separator: ", ") ?? ""
+        draft.notes = existing?.notes ?? ""
+        let saved = await saveHost(draft)
+        if saved {
+            openSSHResultMessage = existing == nil ? "Host imported." : "Host updated from OpenSSH."
+            await refreshOpenSSH()
+        }
+        return saved
+    }
+
+    public func hostExportRequest(
+        for host: HostProfile, configURL: URL, keyURLs: [URL], replaceExisting: Bool
+    ) -> OpenSSHHostExportRequest {
+        .init(
+            alias: host.displayName.replacingOccurrences(of: " ", with: "-"),
+            hostname: host.hostname, port: host.port, username: resolvedUsername(for: host),
+            identityFiles: keyURLs, configURL: configURL, replaceExisting: replaceExisting
+        )
+    }
+
+    public func previewOpenSSHExport(_ request: OpenSSHHostExportRequest) async -> String {
+        await openSSHService?.hostBlock(for: request) ?? ""
+    }
+
+    public func compareOpenSSHExport(_ request: OpenSSHHostExportRequest) async -> OpenSSHHostExportComparison? {
+        do { return try await openSSHService?.comparison(for: request) }
+        catch { errorMessage = error.localizedDescription; return nil }
+    }
+
+    public func exportHostToOpenSSH(
+        _ request: OpenSSHHostExportRequest,
+        keyExports: [(credentialID: UUID, privateURL: URL?, publicURL: URL?)],
+        replaceFiles: Bool,
+        passphrases: [UUID: String] = [:]
+    ) async -> Bool {
+        guard let openSSHService else { return false }
+        do {
+            for item in keyExports {
+                guard let credential = credentials.first(where: { $0.id == item.credentialID }),
+                      let key = credential.accessKey else { continue }
+                if let publicURL = item.publicURL, let publicData = (key.publicKey + "\n").data(using: .utf8) {
+                    try await openSSHService.writeKey(publicData, to: publicURL, privateKey: false, replaceExisting: replaceFiles)
+                }
+                if let privateURL = item.privateURL {
+                    guard let data = await exportPrivateKey(
+                        id: credential.id, passphrase: passphrases[credential.id] ?? ""
+                    ) else { return false }
+                    try await openSSHService.writeKey(data, to: privateURL, privateKey: true, replaceExisting: replaceFiles)
+                }
+            }
+            try await openSSHService.exportHost(request)
+            openSSHResultMessage = FeatureL10n.text("openSSH.host.exported", request.configURL.path)
+            await refreshOpenSSH()
+            return true
+        } catch { errorMessage = error.localizedDescription; return false }
+    }
+
+    public func resolvedUsername(for host: HostProfile) -> String {
+        if case .manual(let username, _) = host.authentication { return username }
+        guard let id = host.authentication.identityID else { return "" }
+        return identities.first { $0.id == id }?.username ?? ""
+    }
+
+    public func connect(_ host: HostProfile, with terminal: TerminalApplication) async {
+        guard capabilities.externalTerminal, let externalTerminalService else { return }
+        connectionHost = host
+        connectionPhase = .resolving
+        do {
+            try await externalTerminalService.connect(host: host, terminal: terminal)
+            connectionPhase = .connected
+        } catch is CancellationError {
+            connectionPhase = .disconnected
+        } catch {
+            connectionPhase = .failed(message: error.localizedDescription)
+        }
+    }
+
+    public func dismissConnection() {
+        connectionPrompts.cancel()
+        connectionHost = nil
+        connectionPhase = .disconnected
+    }
+
+    public func setLogPinned(_ id: UUID, pinned: Bool) async {
+        guard let sessionLogRepository, var log = sessionLogs.first(where: { $0.id == id }) else { return }
+        do { log.isPinned = pinned; try await sessionLogRepository.saveSessionLog(log); await load() }
+        catch { errorMessage = error.localizedDescription }
+    }
+
+    public func deleteLog(_ log: SessionLogMetadata) async {
+        guard let sessionLogRepository, log.state != .active else { return }
+        do {
+            if let sessionLogBaseURL {
+                try? FileManager.default.removeItem(at: sessionLogBaseURL.appending(path: log.relativePath))
+            }
+            try await sessionLogRepository.deleteSessionLog(id: log.id)
+            try? await secretStore.purge(id: log.encryptionKeyID)
+            await load()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    public func exportLog(_ log: SessionLogMetadata) async {
+        guard let sessionLogExporter else { return }
+        do { _ = try await sessionLogExporter.export(log) }
+        catch { errorMessage = error.localizedDescription }
     }
 
     public func saveHost(_ draft: HostDraft) async -> Bool {
@@ -166,18 +415,32 @@ public final class TerminatorAppModel {
                 origin = .generated
             }
 
+            if draft.mode == .importExisting,
+               let existing = activeCredentials.first(where: { $0.accessKey?.fingerprint == prepared.fingerprint }) {
+                openSSHResultMessage = FeatureL10n.text("openSSH.credential.reused", existing.label)
+                return existing.id
+            }
+
             if prepared.compatibility == .legacyRSA1024, !draft.acceptLegacyRSA1024 {
                 throw AccessKeyImportPolicyError.legacyRSAConfirmationRequired
             }
 
             let privateID = SecretID()
             var storedIDs = [privateID]
-            try await secretStore.store(prepared.privateMaterial, for: privateID)
+            var privateMaterial = prepared.privateMaterial
             var protection: PassphraseProtection = prepared.isPassphraseProtected ? .promptEveryConnection : .none
+            if prepared.isPassphraseProtected, !draft.passphrase.isEmpty, !draft.savePassphrase {
+                privateMaterial = try await accessKeyService.exportSoftwareKey(
+                    privateMaterial: prepared.privateMaterial,
+                    passphrase: draft.passphrase
+                )
+                protection = .none
+            }
+            try await secretStore.store(privateMaterial, for: privateID)
             if prepared.isPassphraseProtected, draft.savePassphrase, !draft.passphrase.isEmpty,
                let data = draft.passphrase.data(using: .utf8) {
                 let passphraseID = SecretID()
-                do { try await secretStore.store(data, for: passphraseID) }
+                do { try await secretStore.store(data, for: passphraseID, access: .userPresence) }
                 catch {
                     try? await secretStore.purge(id: privateID)
                     throw error
@@ -247,7 +510,7 @@ public final class TerminatorAppModel {
                 }
                 passphrase = suppliedPassphrase
             }
-            try await userPresenceAuthorizer.authorize(reason: "Reveal SSH private key “\(credential.label)”")
+            try await userPresenceAuthorizer.authorize(reason: FeatureL10n.text("authentication.revealPrivateKey", credential.label))
             let material = try await secretStore.read(id: key.privateMaterialID)
             let clear = try await accessKeyService.exportSoftwareKey(
                 privateMaterial: material,
@@ -302,19 +565,27 @@ public final class TerminatorAppModel {
             }
 
             let privateID = SecretID()
-            var newItems: [(SecretID, Data)] = [(privateID, prepared.privateMaterial)]
+            var privateMaterial = prepared.privateMaterial
             var protection: PassphraseProtection = prepared.isPassphraseProtected ? .promptEveryConnection : .none
+            if prepared.isPassphraseProtected, !draft.passphrase.isEmpty, !draft.savePassphrase {
+                privateMaterial = try await accessKeyService.exportSoftwareKey(
+                    privateMaterial: prepared.privateMaterial,
+                    passphrase: draft.passphrase
+                )
+                protection = .none
+            }
+            var newItems: [(SecretID, Data, SecretAccessPolicy)] = [(privateID, privateMaterial, .deviceOnly)]
             if prepared.isPassphraseProtected, draft.savePassphrase,
                let data = draft.passphrase.data(using: .utf8), !data.isEmpty {
                 let passphraseID = SecretID()
-                newItems.append((passphraseID, data))
+                newItems.append((passphraseID, data, .userPresence))
                 protection = .saved(secretID: passphraseID)
             }
 
             var stored: [SecretID] = []
             do {
-                for (secretID, data) in newItems {
-                    try await secretStore.store(data, for: secretID)
+                for (secretID, data, access) in newItems {
+                    try await secretStore.store(data, for: secretID, access: access)
                     stored.append(secretID)
                 }
             } catch {
@@ -358,7 +629,7 @@ public final class TerminatorAppModel {
             return nil
         }
         do {
-            try await userPresenceAuthorizer.authorize(reason: "Export SSH private key “\(credential.label)”")
+            try await userPresenceAuthorizer.authorize(reason: FeatureL10n.text("authentication.exportPrivateKey", credential.label))
             let material = try await secretStore.read(id: key.privateMaterialID)
             let passphrase: String
             switch key.passphraseProtection {
@@ -389,8 +660,8 @@ public final class TerminatorAppModel {
         )
         let context = draft.suggestedLabelContext?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let context, !context.isEmpty else { return "Key #\(ordinal)" }
-        return "Key #\(ordinal) for “\(context)”"
+        guard let context, !context.isEmpty else { return FeatureL10n.text("key.automaticLabel", ordinal) }
+        return FeatureL10n.text("key.automaticLabel.context", ordinal, context)
     }
 
     public func saveIdentity(_ draft: IdentityDraft) async -> Bool {
@@ -588,7 +859,9 @@ public struct AccessKeyDraft: Identifiable, Equatable, Sendable {
     public var automaticLabel: String {
         let ordinal = suggestedOrdinal ?? 1
         let context = suggestedLabelContext?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return context.isEmpty ? "Key #\(ordinal)" : "Key #\(ordinal) for “\(context)”"
+        return context.isEmpty
+            ? FeatureL10n.text("key.automaticLabel", ordinal)
+            : FeatureL10n.text("key.automaticLabel.context", ordinal, context)
     }
 }
 
@@ -632,4 +905,12 @@ public struct IdentityDraftMethod: Identifiable, Equatable, Sendable {
 public enum IdentityDraftMethodKind: Equatable, Sendable {
     case password(existingSecretID: SecretID?)
     case accessKey(UUID)
+}
+
+private extension String {
+    var normalizedSSHEndpoint: String {
+        trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .lowercased()
+    }
 }

@@ -7,6 +7,12 @@ struct HostsView: View {
     @State private var selectedHostID: UUID?
     @State private var editorDraft: HostDraft?
     @State private var pendingDelete: HostProfile?
+    @State private var pendingImport: DiscoveredSSHHost?
+    @State private var pendingTrust: DiscoveredKnownHost?
+    @State private var exportHost: HostProfile?
+    @State private var importedKeyDraft: AccessKeyDraft?
+    @State private var queuedKeyDrafts: [AccessKeyDraft] = []
+    @State private var keyImportHost: DiscoveredSSHHost?
 
     private var filteredHosts: [HostProfile] {
         guard !search.isEmpty else { return model.hosts }
@@ -21,7 +27,7 @@ struct HostsView: View {
 
     var body: some View {
         Group {
-            if model.hosts.isEmpty {
+            if model.hosts.isEmpty && model.openSSH.hosts.isEmpty {
                 ContentUnavailableView {
                     Label("No hosts", systemImage: "server.rack")
                 } description: {
@@ -48,12 +54,65 @@ struct HostsView: View {
                 }.disabled(selectedHost == nil)
                 Button("Add Host", systemImage: "plus") { editorDraft = HostDraft() }
                     .accessibilityIdentifier("add-host")
+                if model.capabilities.externalFileAccess {
+                    Button("Refresh OpenSSH", systemImage: "arrow.clockwise") {
+                        Task { await model.refreshOpenSSH() }
+                    }
+                    .disabled(model.isScanningOpenSSH)
+                }
             }
         }
         .sheet(item: $editorDraft) { draft in
             HostEditor(draft: draft) { savedDraft in
                 if await model.saveHost(savedDraft) { editorDraft = nil }
             }
+        }
+        .sheet(item: $pendingImport) { discovered in
+            OpenSSHHostImportReview(
+                discovered: discovered,
+                existing: model.matchingHost(for: discovered),
+                existingUsername: model.matchingHost(for: discovered).map(model.resolvedUsername),
+                availableKeys: discovered.identityFiles.compactMap(model.discoveredKey)
+            ) { selected in
+                pendingImport = nil
+                Task { await importHost(discovered, selectedKeys: selected) }
+            }
+        }
+        .sheet(item: $importedKeyDraft) { draft in
+            AccessKeyEditor(draft: draft) { value in
+                let wasNew = value.credentialID == nil
+                if let id = await model.saveAccessKey(value) {
+                    if wasNew, let keyImportHost { _ = await model.importHost(keyImportHost, credentialIDs: [id]) }
+                    importedKeyDraft = nil
+                    showNextImportedKey()
+                }
+            }
+        }
+        .sheet(item: $exportHost) { host in
+            OpenSSHExportView(host: host) { exportHost = nil }
+        }
+        .confirmationDialog(
+            pendingTrust?.status == .changed ? "Replace changed server key?" : "Trust this server key?",
+            isPresented: Binding(get: { pendingTrust != nil }, set: { if !$0 { pendingTrust = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button(pendingTrust?.status == .changed ? "Replace Key" : "Import Trust", role: pendingTrust?.status == .changed ? .destructive : nil) {
+                if let item = pendingTrust {
+                    Task { _ = await model.importKnownHost(item, replaceChanged: item.status == .changed) }
+                }
+                pendingTrust = nil
+            }
+            Button("Cancel", role: .cancel) { pendingTrust = nil }
+        } message: {
+            if let pendingTrust { Text("\(pendingTrust.endpoint)\n\(pendingTrust.fingerprint)") }
+        }
+        .alert("OpenSSH", isPresented: Binding(
+            get: { model.openSSHResultMessage != nil },
+            set: { if !$0 { model.openSSHResultMessage = nil } }
+        )) {
+            Button("OK") { model.openSSHResultMessage = nil }
+        } message: {
+            Text(model.openSSHResultMessage ?? "")
         }
         .confirmationDialog(
             "Archive this host?",
@@ -71,13 +130,73 @@ struct HostsView: View {
     }
 
     private var hostList: some View {
-        List(filteredHosts, selection: $selectedHostID) { host in
-            HostRow(host: host, username: resolvedUsername(for: host))
-                .tag(host.id)
-                .contextMenu {
-                    Button("Edit") { editorDraft = HostDraft(host: host) }
-                    Button("Archive", role: .destructive) { pendingDelete = host }
+        List(selection: $selectedHostID) {
+            Section("Catalog") {
+                ForEach(filteredHosts) { host in
+                    HostRow(host: host, username: resolvedUsername(for: host))
+                        .tag(host.id)
+                        .contextMenu {
+                            if model.capabilities.externalTerminal {
+                                Menu("Connect with") {
+                                    ForEach(model.terminalApplications) { terminal in
+                                        Button(terminal.displayName) { Task { await model.connect(host, with: terminal) } }
+                                    }
+                                }
+                                Divider()
+                            }
+                            Button("Edit") { editorDraft = HostDraft(host: host) }
+                            if model.capabilities.externalFileAccess {
+                                Button("Export to OpenSSH…") { exportHost = host }
+                            }
+                            Button("Archive", role: .destructive) { pendingDelete = host }
+                        }
                 }
+            }
+            if model.capabilities.externalFileAccess, !model.openSSH.hosts.isEmpty {
+                Section("Available from OpenSSH") {
+                    ForEach(model.openSSH.hosts) { host in
+                        HStack {
+                            Image(systemName: host.status == .existing ? "arrow.triangle.2.circlepath" : "square.and.arrow.down")
+                            VStack(alignment: .leading) {
+                                Text(host.alias).fontWeight(.medium)
+                                Text("\(host.username)@\(host.hostname):\(host.port)")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(host.status == .existing ? "Compare" : "Import")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                        .contentShape(Rectangle())
+                        .contextMenu {
+                            Button(host.status == .existing ? "Compare and Update…" : "Import…") {
+                                pendingImport = host
+                            }
+                        }
+                    }
+                }
+            }
+            if model.capabilities.externalFileAccess, !model.openSSH.knownHosts.isEmpty {
+                Section("OpenSSH Trusted Endpoints") {
+                    ForEach(model.openSSH.knownHosts) { item in
+                        HStack {
+                            Image(systemName: item.status == .changed ? "exclamationmark.shield" : "checkmark.shield")
+                                .foregroundStyle(item.status == .changed ? .red : .secondary)
+                            VStack(alignment: .leading) {
+                                Text(item.endpoint)
+                                Text("\(item.algorithm) · \(item.fingerprint)")
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        .contextMenu {
+                            if item.status != .existing {
+                                Button(item.status == .changed ? "Review Changed Key…" : "Import Trust") {
+                                    pendingTrust = item
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         .frame(minWidth: 280, idealWidth: 360)
         .accessibilityIdentifier("hosts-list")
@@ -103,6 +222,268 @@ struct HostsView: View {
         guard let id = host.authentication.identityID else { return "Unavailable identity" }
         return model.identities.first { $0.id == id }?.username ?? "Unavailable identity"
     }
+
+    private func importHost(_ host: DiscoveredSSHHost, selectedKeys: [DiscoveredAccessKey]) async {
+        var credentialIDs: [UUID] = []
+        var editors: [AccessKeyDraft] = []
+        keyImportHost = host
+        for key in selectedKeys {
+            if let fingerprint = key.fingerprint,
+               let existing = model.activeCredentials.first(where: { $0.accessKey?.fingerprint == fingerprint }) {
+                credentialIDs.append(existing.id)
+                continue
+            }
+            var draft = model.draft(for: key)
+            if key.isEncrypted {
+                editors.append(draft)
+            } else if let id = await model.saveAccessKey(draft) {
+                credentialIDs.append(id)
+                draft.credentialID = id
+                editors.append(draft)
+            }
+        }
+        _ = await model.importHost(host, credentialIDs: credentialIDs)
+        queuedKeyDrafts = editors
+        showNextImportedKey()
+    }
+
+    private func showNextImportedKey() {
+        guard importedKeyDraft == nil, !queuedKeyDrafts.isEmpty else { return }
+        importedKeyDraft = queuedKeyDrafts.removeFirst()
+    }
+}
+
+private struct OpenSSHHostImportReview: View {
+    @Environment(\.dismiss) private var dismiss
+    let discovered: DiscoveredSSHHost
+    let existing: HostProfile?
+    let existingUsername: String?
+    let availableKeys: [DiscoveredAccessKey]
+    let onImport: ([DiscoveredAccessKey]) -> Void
+    @State private var selectedPaths: Set<String>
+
+    init(
+        discovered: DiscoveredSSHHost, existing: HostProfile?, existingUsername: String?,
+        availableKeys: [DiscoveredAccessKey],
+        onImport: @escaping ([DiscoveredAccessKey]) -> Void
+    ) {
+        self.discovered = discovered; self.existing = existing; self.existingUsername = existingUsername
+        self.availableKeys = availableKeys; self.onImport = onImport
+        _selectedPaths = State(initialValue: Set(availableKeys.map { $0.privateKeyURL.path }))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section(existing == nil ? "Host to Import" : "Compare Host") {
+                    comparison("Alias", current: existing?.displayName, incoming: discovered.alias)
+                    comparison("Hostname", current: existing?.hostname, incoming: discovered.hostname)
+                    comparison("Port", current: existing.map { String($0.port) }, incoming: String(discovered.port))
+                    comparison("Username", current: existingUsername, incoming: discovered.username)
+                }
+                if !availableKeys.isEmpty {
+                    Section("Identity Files") {
+                        ForEach(availableKeys) { key in
+                            Toggle(isOn: Binding(
+                                get: { selectedPaths.contains(key.privateKeyURL.path) },
+                                set: { selected in
+                                    if selected { selectedPaths.insert(key.privateKeyURL.path) }
+                                    else { selectedPaths.remove(key.privateKeyURL.path) }
+                                }
+                            )) {
+                                VStack(alignment: .leading) {
+                                    Text(key.label)
+                                    Text(key.fingerprint ?? (key.isEncrypted ? "Encrypted OpenSSH key" : key.privateKeyURL.path))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                if existing != nil {
+                    Section {
+                        Text("OpenSSH values replace the fields shown above. Existing password and access-key methods are retained; selected keys are added without duplicates.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }.formStyle(.grouped)
+            Divider()
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(existing == nil ? "Import" : "Update") {
+                    onImport(availableKeys.filter { selectedPaths.contains($0.privateKeyURL.path) })
+                }
+                .buttonStyle(.glassProminent).tint(.clear).keyboardShortcut(.defaultAction)
+            }.padding()
+        }
+        .frame(width: 650, height: 560)
+    }
+
+    @ViewBuilder
+    private func comparison(_ label: String, current: String?, incoming: String) -> some View {
+        LabeledContent(label) {
+            if let current, current != incoming {
+                HStack {
+                    Text(current).strikethrough().foregroundStyle(.secondary)
+                    Image(systemName: "arrow.right")
+                    Text(incoming).fontWeight(.medium)
+                }
+            } else { Text(incoming) }
+        }
+    }
+}
+
+private struct OpenSSHExportView: View {
+    @Environment(TerminatorAppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let host: HostProfile
+    let onFinish: () -> Void
+    @State private var alias: String
+    @State private var configPath: String
+    @State private var keyDirectory: String
+    @State private var publicKeyIDs: Set<UUID> = []
+    @State private var privateKeyIDs: Set<UUID> = []
+    @State private var passphrases: [UUID: String] = [:]
+    @State private var replaceHostBlock = false
+    @State private var replaceKeyFiles = false
+    @State private var preview = ""
+    @State private var comparison: OpenSSHHostExportComparison?
+
+    init(host: HostProfile, onFinish: @escaping () -> Void) {
+        self.host = host; self.onFinish = onFinish
+        let ssh = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".ssh")
+        _alias = State(initialValue: host.displayName.replacingOccurrences(of: " ", with: "-"))
+        _configPath = State(initialValue: ssh.appending(path: "config").path)
+        _keyDirectory = State(initialValue: ssh.path)
+    }
+
+    private var credentials: [CredentialMetadata] {
+        let ids = host.authentication.credentialIDs
+        return ids.compactMap { id in model.credentials.first { $0.id == id && $0.kind == .accessKey } }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section("Destination") {
+                    TextField("Host alias", text: $alias)
+                    TextField("SSH config", text: $configPath)
+                    TextField("Key directory", text: $keyDirectory)
+                }
+                if !credentials.isEmpty {
+                    Section("Keys") {
+                        ForEach(credentials) { credential in
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(credential.label).fontWeight(.medium)
+                                Toggle("Export public key", isOn: selectionBinding(credential.id, in: $publicKeyIDs))
+                                Toggle(
+                                    credential.accessKey?.backend == .secureEnclave
+                                        ? "Private key cannot be exported from Secure Enclave"
+                                        : "Export private key",
+                                    isOn: selectionBinding(credential.id, in: $privateKeyIDs)
+                                )
+                                .disabled(credential.accessKey?.backend != .software)
+                                if privateKeyIDs.contains(credential.id),
+                                   case .promptEveryConnection = credential.accessKey?.passphraseProtection {
+                                    SecureField(
+                                        "Private-key passphrase",
+                                        text: Binding(
+                                            get: { passphrases[credential.id, default: ""] },
+                                            set: { passphrases[credential.id] = $0 }
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        Toggle("Allow replacing selected key files", isOn: $replaceKeyFiles)
+                        Text("Private-key export requires system authentication. Secure Enclave private keys are never exported.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Section("Proposed Host Block") {
+                    Text(preview).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                }
+                if let comparison {
+                    Section("Existing Host Block") {
+                        Text(comparison.existingBlock).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        Toggle("Replace this Host block", isOn: $replaceHostBlock)
+                    }
+                }
+            }.formStyle(.grouped)
+            Divider()
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Refresh Comparison") { Task { await refreshPreview() } }
+                Button("Export") { Task { await performExport() } }
+                    .buttonStyle(.glassProminent).tint(.clear)
+                    .disabled(comparison != nil && !replaceHostBlock)
+            }.padding()
+        }
+        .frame(width: 720, height: 680)
+        .task {
+            if publicKeyIDs.isEmpty { publicKeyIDs = Set(credentials.map(\.id)) }
+            await refreshPreview()
+        }
+        .onChange(of: alias) { _, _ in Task { await refreshPreview() } }
+        .onChange(of: configPath) { _, _ in Task { await refreshPreview() } }
+        .onChange(of: keyDirectory) { _, _ in Task { await refreshPreview() } }
+        .onChange(of: privateKeyIDs) { _, _ in Task { await refreshPreview() } }
+    }
+
+    private func request(replaceExisting: Bool) -> OpenSSHHostExportRequest {
+        // OpenSSH IdentityFile must point to usable private key material. A
+        // public-only export (including Secure Enclave keys) is intentionally
+        // not added to the generated Host block.
+        let keyURLs = credentials.filter { privateKeyIDs.contains($0.id) }.map { credential in
+            URL(fileURLWithPath: keyDirectory).appending(path: safeFilename(credential.label))
+        }
+        return .init(
+            alias: alias, hostname: host.hostname, port: host.port,
+            username: model.resolvedUsername(for: host), identityFiles: keyURLs,
+            configURL: URL(fileURLWithPath: configPath), replaceExisting: replaceExisting
+        )
+    }
+
+    private func refreshPreview() async {
+        let value = request(replaceExisting: false)
+        preview = await model.previewOpenSSHExport(value)
+        comparison = await model.compareOpenSSHExport(value)
+        replaceHostBlock = false
+    }
+
+    private func performExport() async {
+        let directory = URL(fileURLWithPath: keyDirectory)
+        let exports = credentials.map { credential in
+            let base = directory.appending(path: safeFilename(credential.label))
+            return (
+                credentialID: credential.id,
+                privateURL: privateKeyIDs.contains(credential.id) && credential.accessKey?.backend == .software ? base : nil,
+                publicURL: publicKeyIDs.contains(credential.id) ? URL(fileURLWithPath: base.path + ".pub") : nil
+            )
+        }
+        if await model.exportHostToOpenSSH(
+            request(replaceExisting: replaceHostBlock), keyExports: exports,
+            replaceFiles: replaceKeyFiles, passphrases: passphrases
+        ) { onFinish() }
+    }
+
+    private func selectionBinding(_ id: UUID, in selection: Binding<Set<UUID>>) -> Binding<Bool> {
+        Binding(
+            get: { selection.wrappedValue.contains(id) },
+            set: { selected in
+                if selected { selection.wrappedValue.insert(id) }
+                else { selection.wrappedValue.remove(id) }
+            }
+        )
+    }
+
+    private func safeFilename(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let result = value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "_" }
+        return String(result).isEmpty ? "id_terminator" : String(result)
+    }
 }
 
 private struct HostRow: View {
@@ -121,6 +502,7 @@ private struct HostRow: View {
 }
 
 private struct HostDetailView: View {
+    @Environment(TerminatorAppModel.self) private var model
     let host: HostProfile
     let identity: IdentityProfile?
     let credentials: [CredentialMetadata]
@@ -148,9 +530,17 @@ private struct HostDetailView: View {
             }
             if !host.notes.isEmpty { Section("Notes") { Text(host.notes).textSelection(.enabled) } }
             Section {
-                Button("Connect", systemImage: "bolt.horizontal") {}.disabled(true)
+                if model.capabilities.externalTerminal {
+                    Menu("Connect with", systemImage: "bolt.horizontal") {
+                        ForEach(model.terminalApplications) { terminal in
+                            Button(terminal.displayName) { Task { await model.connect(host, with: terminal) } }
+                        }
+                    }
+                }
             } footer: {
-                Text("Authentication is configured; the network SSH transport is a separate milestone.")
+                Text(model.capabilities.externalTerminal
+                    ? "Terminator owns the SSH connection; the selected terminal renders it through a protected local attach socket."
+                    : "External terminal connections are available in the Direct macOS edition.")
             }
         }
         .formStyle(.grouped)
@@ -188,7 +578,7 @@ private struct HostEditor: View {
                         Picker("Identity", selection: $draft.identityID) {
                             Text("Select Identity").tag(UUID?.none)
                             ForEach(model.activeIdentities) { identity in
-                                Text("\(identity.name) · \(identity.username)").tag(Optional(identity.id))
+                                Text(FeatureL10n.text("identity.nameAndUsername", identity.name, identity.username)).tag(Optional(identity.id))
                             }
                         }
                     } else {
@@ -225,12 +615,27 @@ private struct HostEditor: View {
                                     )
                                 }
                             }
-                            Button("Add Access Key", systemImage: "key.horizontal") {
-                                var value = AccessKeyDraft()
-                                value.mode = .importExisting
-                                value.suggestedLabelContext = hostLabelContext
-                                value.suggestedOrdinal = accessKeyCount + 1
-                                accessKeyDraft = value
+                            Menu("Add Access Key", systemImage: "key.horizontal") {
+                                Button("Add New Access Key…", systemImage: "plus") {
+                                    beginCreatingAccessKey()
+                                }
+                                Divider()
+                                if availableAccessKeys.isEmpty {
+                                    Text("No Available Access Keys")
+                                } else {
+                                    ForEach(availableAccessKeys) { credential in
+                                        Button {
+                                            addAccessKey(credential.id)
+                                        } label: {
+                                            Label(
+                                                credential.label,
+                                                systemImage: credential.accessKey?.backend == .secureEnclave
+                                                    ? "touchid"
+                                                    : "key.horizontal"
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -277,9 +682,33 @@ private struct HostEditor: View {
         }.count
     }
 
+    private var selectedAccessKeyIDs: Set<UUID> {
+        Set(draft.authenticationMethods.compactMap { method in
+            if case .accessKey(let id) = method.kind { return id }
+            return nil
+        })
+    }
+
+    private var availableAccessKeys: [CredentialMetadata] {
+        model.activeCredentials.filter { !selectedAccessKeyIDs.contains($0.id) }
+    }
+
     private var hostLabelContext: String {
         let name = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? draft.hostname.trimmingCharacters(in: .whitespacesAndNewlines) : name
+    }
+
+    private func beginCreatingAccessKey() {
+        var value = AccessKeyDraft()
+        value.mode = .importExisting
+        value.suggestedLabelContext = hostLabelContext
+        value.suggestedOrdinal = accessKeyCount + 1
+        accessKeyDraft = value
+    }
+
+    private func addAccessKey(_ id: UUID) {
+        guard !selectedAccessKeyIDs.contains(id) else { return }
+        draft.authenticationMethods.append(IdentityDraftMethod(kind: .accessKey(id)))
     }
 
     private func move(_ index: Int, _ delta: Int) {

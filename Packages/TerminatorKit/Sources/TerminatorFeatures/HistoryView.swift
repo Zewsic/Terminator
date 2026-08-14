@@ -83,12 +83,12 @@ struct HistoryView: View {
         case .credential:
             if let data = entry.afterSnapshot,
                let credential = try? JSONDecoder().decode(CredentialMetadata.self, from: data) {
-                return "\(credential.label) · \(credential.kind.displayName) · secret bytes redacted"
+                return FeatureL10n.text("history.credentialSummary", credential.label, credential.kind.displayName)
             }
         case .identity:
             if let data = entry.afterSnapshot,
                let identity = try? JSONDecoder().decode(IdentityProfile.self, from: data) {
-                return "\(identity.name) · \(identity.username) · \(identity.authenticationMethods.count) methods"
+                return FeatureL10n.text("history.identitySummary", identity.name, identity.username, identity.authenticationMethods.count)
             }
         }
         return entry.entityID.uuidString

@@ -23,7 +23,7 @@ struct ContainersView: View {
                                     .font(.caption2.bold())
                                     .foregroundStyle(.secondary)
                             }
-                            Text("\(container.image) · \(container.endpointName)")
+                            Text(FeatureL10n.text("container.summary", container.image, container.endpointName))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

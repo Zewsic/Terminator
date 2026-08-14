@@ -1,0 +1,10 @@
+"error.authenticationFailed" = "The server rejected every configured authentication method.";
+"error.hostKeyRejected" = "The server host key was not trusted.";
+"error.unsupportedRSA" = "RSA authentication requires the Terminator RFC 8332 transport patch.";
+"error.sessionUnavailable" = "The SSH session is no longer available.";
+"error.invalidLogFormat" = "The session log is damaged or uses an unsupported format.";
+"error.missingLog" = "The session log file is missing.";
+"error.expiredOrInvalidToken" = "The attach command has expired or was already used.";
+"error.protocolError" = "The terminal attach client used an invalid protocol frame.";
+"authentication.secureEnclave.required" = "Touch ID is required to use this SSH key.";
+"session.reconnected" = "Reconnected with a new remote shell";

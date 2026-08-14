@@ -1,0 +1,6 @@
+"error.duplicateSecret" = "A secret with this identifier already exists.";
+"error.secretNotFound" = "The requested secret is not available.";
+"error.unexpectedData" = "Keychain returned an unexpected value.";
+"error.accessControlCreationFailed" = "Keychain could not create Touch ID protection for this secret.";
+"error.securityStatus" = "Keychain operation failed with status %ld.";
+"authentication.unlockPassphrase" = "Unlock the saved SSH key passphrase";

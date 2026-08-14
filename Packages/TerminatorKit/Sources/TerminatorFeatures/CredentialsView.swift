@@ -10,8 +10,15 @@ import UIKit
 
 struct CredentialsView: View {
     private enum Pane: String, CaseIterable {
-        case identities = "Identities"
-        case credentials = "Credentials"
+        case identities
+        case credentials
+
+        var title: String {
+            switch self {
+            case .identities: "Identities"
+            case .credentials: "Credentials"
+            }
+        }
     }
 
     @Environment(TerminatorAppModel.self) private var model
@@ -22,6 +29,7 @@ struct CredentialsView: View {
     @State private var pendingArchive: CredentialMetadata?
     @State private var pendingPurge: CredentialMetadata?
     @State private var pendingIdentityArchive: IdentityProfile?
+    @State private var discoveredKeyDraft: AccessKeyDraft?
 
     var body: some View {
         Group {
@@ -34,7 +42,7 @@ struct CredentialsView: View {
         .toolbar {
             ToolbarItem {
                 Picker("Section", selection: $pane) {
-                    ForEach(Pane.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    ForEach(Pane.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 260)
@@ -54,6 +62,13 @@ struct CredentialsView: View {
         .sheet(item: $selectedCredential) { credential in
             AccessKeyEditor(credential: credential) { value in
                 if await model.replaceAccessKey(value) { selectedCredential = nil }
+            }
+        }
+        .sheet(item: $discoveredKeyDraft) { draft in
+            AccessKeyEditor(draft: draft) { value in
+                if let id = await model.saveAccessKey(value) {
+                    discoveredKeyDraft = await model.accessKeyDraft(id: id)
+                }
             }
         }
         .confirmationDialog(
@@ -144,7 +159,7 @@ struct CredentialsView: View {
             Image(systemName: "person.badge.key").foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text(identity.name).fontWeight(.medium)
-                Text("\(identity.username) · \(identity.authenticationMethods.count) method\(identity.authenticationMethods.count == 1 ? "" : "s")")
+                Text(FeatureL10n.text(identity.authenticationMethods.count == 1 ? "identity.summary.one" : "identity.summary.many", identity.username, identity.authenticationMethods.count))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
@@ -179,6 +194,27 @@ struct CredentialsView: View {
                 if !keys.isEmpty { Section("Access Keys") { ForEach(keys) { credentialRow($0) } } }
                 if !legacy.isEmpty { Section("Needs Review") { ForEach(legacy) { credentialRow($0) } } }
                 if !archived.isEmpty { Section("Archived and Purged") { ForEach(archived) { credentialRow($0) } } }
+                if model.capabilities.externalFileAccess, !model.openSSH.accessKeys.isEmpty {
+                    Section("Available from OpenSSH") {
+                        ForEach(model.openSSH.accessKeys) { key in
+                            HStack {
+                                Image(systemName: key.status == .existing ? "checkmark.circle" : "square.and.arrow.down")
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(key.label).fontWeight(.medium)
+                                    Text(key.fingerprint ?? (key.isEncrypted ? "Encrypted OpenSSH key" : key.privateKeyURL.path))
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            .contextMenu {
+                                if key.status == .existing {
+                                    Text("Already imported")
+                                } else {
+                                    Button("Import") { discoveredKeyDraft = model.draft(for: key) }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             .accessibilityIdentifier("credentials-list")
         }
@@ -216,8 +252,8 @@ struct CredentialsView: View {
         let usage = model.credentialUsageCount(id: credential.id)
         let detail = credential.accessKey?.algorithm.displayName ?? credential.kind.displayName
         if credential.isDeleted { return "Archived · secret retained" }
-        if usage == 0 { return "Unused · \(detail)" }
-        return "Used by \(usage) profile\(usage == 1 ? "" : "s") · \(detail)"
+        if usage == 0 { return FeatureL10n.text("credential.status.unused", detail) }
+        return FeatureL10n.text(usage == 1 ? "credential.status.used.one" : "credential.status.used.many", usage, detail)
     }
 }
 
@@ -356,14 +392,12 @@ struct AccessKeyEditor: View {
                         } else {
                             SecureField("Confirm passphrase", text: $draft.passphraseConfirmation)
                         }
-                        Toggle("Save passphrase in Keychain", isOn: $draft.savePassphrase)
+                        Toggle("Require Touch ID for connections", isOn: $draft.savePassphrase)
                             .disabled(draft.passphrase.isEmpty)
                     } header: {
                         Text("Passphrase")
                     } footer: {
-                        Text(draft.savePassphrase
-                             ? "The encrypted key and passphrase use separate device-only Keychain items."
-                             : "If protected, the passphrase will be requested for every connection.")
+                        Text(passphraseStorageDescription)
                     }
                 } else {
                     Section {
@@ -404,6 +438,16 @@ struct AccessKeyEditor: View {
         case .generateSoftware: "Generate Access Key"
         case .generateSecureEnclave: "Create Secure Enclave Key"
         }
+    }
+
+    private var passphraseStorageDescription: String {
+        if draft.passphrase.isEmpty {
+            return "An encrypted imported key is saved as-is; its passphrase is requested for every connection."
+        }
+        if draft.savePassphrase {
+            return "The encrypted key stays encrypted. Its passphrase is stored with Keychain user-presence protection, so every connection requires Touch ID or the Mac login password."
+        }
+        return "The key is unlocked before storage and connections are automatic. The private key remains device-only in Keychain."
     }
 
     private func updateGeneration() {
@@ -493,12 +537,27 @@ private struct IdentityEditor: View {
                                 )
                             }
                         }
-                        Button("Add Access Key", systemImage: "key.horizontal") {
-                            var value = AccessKeyDraft()
-                            value.mode = .importExisting
-                            value.suggestedLabelContext = identityLabelContext
-                            value.suggestedOrdinal = accessKeyCount + 1
-                            accessKeyDraft = value
+                        Menu("Add Access Key", systemImage: "key.horizontal") {
+                            Button("Add New Access Key…", systemImage: "plus") {
+                                beginCreatingAccessKey()
+                            }
+                            Divider()
+                            if availableAccessKeys.isEmpty {
+                                Text("No Available Access Keys")
+                            } else {
+                                ForEach(availableAccessKeys) { credential in
+                                    Button {
+                                        addAccessKey(credential.id)
+                                    } label: {
+                                        Label(
+                                            credential.label,
+                                            systemImage: credential.accessKey?.backend == .secureEnclave
+                                                ? "touchid"
+                                                : "key.horizontal"
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -529,9 +588,29 @@ private struct IdentityEditor: View {
             return false
         }.count
     }
+    private var selectedAccessKeyIDs: Set<UUID> {
+        Set(draft.authenticationMethods.compactMap { method in
+            if case .accessKey(let id) = method.kind { return id }
+            return nil
+        })
+    }
+    private var availableAccessKeys: [CredentialMetadata] {
+        model.activeCredentials.filter { !selectedAccessKeyIDs.contains($0.id) }
+    }
     private var identityLabelContext: String {
         let name = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? draft.username.trimmingCharacters(in: .whitespacesAndNewlines) : name
+    }
+    private func beginCreatingAccessKey() {
+        var value = AccessKeyDraft()
+        value.mode = .importExisting
+        value.suggestedLabelContext = identityLabelContext
+        value.suggestedOrdinal = accessKeyCount + 1
+        accessKeyDraft = value
+    }
+    private func addAccessKey(_ id: UUID) {
+        guard !selectedAccessKeyIDs.contains(id) else { return }
+        draft.authenticationMethods.append(IdentityDraftMethod(kind: .accessKey(id)))
     }
     private func move(_ index: Int, by delta: Int) {
         let target = index + delta
