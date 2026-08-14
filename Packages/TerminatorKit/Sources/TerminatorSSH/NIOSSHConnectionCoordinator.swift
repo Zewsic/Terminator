@@ -10,6 +10,8 @@ import TerminatorSecurity
 
 public enum SSHTransportError: LocalizedError, Sendable {
     case authenticationFailed
+    case authenticationRejected(availableMethods: [String])
+    case authenticationTimedOut
     case hostKeyRejected
     case unsupportedRSA
     case sessionUnavailable
@@ -17,6 +19,13 @@ public enum SSHTransportError: LocalizedError, Sendable {
     public var errorDescription: String? {
         switch self {
         case .authenticationFailed: "The server rejected every configured authentication method."
+        case .authenticationRejected(let availableMethods):
+            if availableMethods.isEmpty {
+                "Authentication failed. The server did not offer a supported authentication method."
+            } else {
+                "Authentication failed. The server accepts: \(availableMethods.joined(separator: ", "))."
+            }
+        case .authenticationTimedOut: "Authentication timed out. The server did not complete the SSH login."
         case .hostKeyRejected: "The server host key was not trusted."
         case .unsupportedRSA: "RSA authentication requires the Terminator RFC 8332 transport patch."
         case .sessionUnavailable: "The SSH session is no longer available."
@@ -102,7 +111,18 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         let identity = try await authenticationResolver.resolve(host: host, prompting: prompting)
         phases[host.id] = .authenticating
         let offers = try await authenticationOffers(identity, prompting: prompting)
-        let authDelegate = OrderedAuthenticationDelegate(username: identity.username, offers: offers)
+        let authenticationResult = AuthenticationResultBridge(eventLoop: group.next())
+        let authDelegate = OrderedAuthenticationDelegate(
+            username: identity.username,
+            offers: offers,
+            onExhausted: { availableMethods in
+                authenticationResult.fail(
+                    SSHTransportError.authenticationRejected(
+                        availableMethods: availableMethods.terminatorDisplayNames
+                    )
+                )
+            }
+        )
         let hostDelegate = StrictHostKeyDelegate(
             endpoint: Self.endpoint(for: host), repository: knownHosts, prompting: prompting
         )
@@ -118,6 +138,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
                         inboundChildChannelInitializer: nil
                     )
                     try channel.pipeline.syncOperations.addHandler(ssh)
+                    try channel.pipeline.syncOperations.addHandler(authenticationResult)
                     try channel.pipeline.syncOperations.addHandler(closeBridge)
                 }
             }
@@ -132,8 +153,23 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
 
         do {
             let channel = try await bootstrap.connect(host: host.hostname, port: host.port).get()
+            let authenticationTimeout = channel.eventLoop.scheduleTask(in: .seconds(30)) {
+                authenticationResult.fail(SSHTransportError.authenticationTimedOut)
+                channel.close(promise: nil)
+            }
+            do {
+                try await authenticationResult.futureResult.get()
+                authenticationTimeout.cancel()
+            } catch {
+                authenticationTimeout.cancel()
+                try? await channel.close().get()
+                throw error
+            }
             pools[host.id] = Pool(host: host, prompting: prompting, channel: channel)
-            phases[host.id] = .connected
+            // A live TCP channel is not yet an authenticated SSH connection.
+            // `.connected` is set only after the first child session channel
+            // has been accepted by the server.
+            phases[host.id] = .authenticating
         } catch {
             phases[host.id] = .failed(message: error.localizedDescription)
             throw error
@@ -160,6 +196,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
                 hostID: host.id, terminal: terminal, size: size, channel: child,
                 continuation: continuation, log: log
             )
+            phases[host.id] = .connected
             let logID = await log.metadata.id
             return SSHSessionHandle(
                 id: id, logID: logID, events: stream,
@@ -168,6 +205,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
                 closer: { [weak self] in await self?.closeSession(id: id) }
             )
         } catch {
+            phases[host.id] = .failed(message: error.localizedDescription)
             await log.finish()
             continuation.finish()
             throw error
@@ -349,6 +387,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
                     await session.log.markReconnect()
                     session.continuation.yield(.status("\r\n--- Terminator reconnected: new remote shell ---\r\n"))
                 }
+                phases[host.id] = .connected
                 reconnectTasks[host.id] = nil
                 return
             } catch {
@@ -385,10 +424,19 @@ private enum AuthOffer: @unchecked Sendable {
 
 private final class OrderedAuthenticationDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
     private let username: String
+    private let onExhausted: @Sendable (NIOSSHAvailableUserAuthenticationMethods) -> Void
     private let lock = NSLock()
     private var offers: [AuthOffer]
 
-    init(username: String, offers: [AuthOffer]) { self.username = username; self.offers = offers }
+    init(
+        username: String,
+        offers: [AuthOffer],
+        onExhausted: @escaping @Sendable (NIOSSHAvailableUserAuthenticationMethods) -> Void
+    ) {
+        self.username = username
+        self.offers = offers
+        self.onExhausted = onExhausted
+    }
 
     func nextAuthenticationType(
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
@@ -412,7 +460,67 @@ private final class OrderedAuthenticationDelegate: NIOSSHClientUserAuthenticatio
             default: continue
             }
         }
-        nextChallengePromise.succeed(nil)
+        let error = SSHTransportError.authenticationRejected(
+            availableMethods: availableMethods.terminatorDisplayNames
+        )
+        onExhausted(availableMethods)
+        nextChallengePromise.fail(error)
+    }
+}
+
+private extension NIOSSHAvailableUserAuthenticationMethods {
+    var terminatorDisplayNames: [String] {
+        var result: [String] = []
+        if contains(.password) { result.append("password") }
+        if contains(.publicKey) { result.append("public key") }
+        if contains(.hostBased) { result.append("host-based authentication") }
+        return result
+    }
+}
+
+private final class AuthenticationResultBridge: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = Any
+
+    let futureResult: EventLoopFuture<Void>
+    private let promise: EventLoopPromise<Void>
+    private let lock = NSLock()
+    private var completed = false
+
+    init(eventLoop: EventLoop) {
+        promise = eventLoop.makePromise(of: Void.self)
+        futureResult = promise.futureResult
+    }
+
+    func fail(_ error: Error) {
+        complete { promise.fail(error) }
+    }
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if event is UserAuthSuccessEvent {
+            complete { promise.succeed(()) }
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        fail(SSHTransportError.authenticationFailed)
+        context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        fail(error)
+        context.fireErrorCaught(error)
+    }
+
+    private func complete(_ body: () -> Void) {
+        lock.lock()
+        guard !completed else {
+            lock.unlock()
+            return
+        }
+        completed = true
+        lock.unlock()
+        body()
     }
 }
 

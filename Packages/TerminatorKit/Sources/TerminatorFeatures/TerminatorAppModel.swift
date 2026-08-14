@@ -18,7 +18,9 @@ public final class TerminatorAppModel {
     public var openSSHResultMessage: String?
     public let connectionPrompts: ConnectionPromptCenter
     public var connectionHost: HostProfile?
+    public private(set) var connectionTerminal: TerminalApplication?
     public private(set) var connectionPhase: SSHConnectionPhase = .disconnected
+    public private(set) var hostConnectionPhases: [UUID: SSHConnectionPhase] = [:]
     public private(set) var isLoading = false
     public var errorMessage: String?
 
@@ -38,6 +40,7 @@ public final class TerminatorAppModel {
     private let sessionLogExporter: (any SessionLogExporting)?
     private let knownHostRepository: (any KnownHostRepository)?
     private let openSSHService: (any OpenSSHIntegrationService)?
+    private var connectionMonitors: [UUID: Task<Void, Never>] = [:]
 
     public init(
         capabilities: AppCapabilities,
@@ -131,9 +134,17 @@ public final class TerminatorAppModel {
                 for index in snapshot.knownHosts.indices {
                     let item = snapshot.knownHosts[index]
                     let stored = try await knownHostRepository.knownHost(endpoint: item.endpoint, algorithm: item.algorithm)
-                    snapshot.knownHosts[index].status = stored == nil
-                        ? .available
-                        : (stored?.publicKey == item.publicKey ? .existing : .changed)
+                    if stored == nil {
+                        try await knownHostRepository.saveKnownHost(.init(
+                            endpoint: item.endpoint,
+                            algorithm: item.algorithm,
+                            publicKey: item.publicKey,
+                            fingerprint: item.fingerprint
+                        ))
+                        snapshot.knownHosts[index].status = .existing
+                    } else {
+                        snapshot.knownHosts[index].status = stored?.publicKey == item.publicKey ? .existing : .changed
+                    }
                 }
             }
             openSSH = snapshot
@@ -261,7 +272,6 @@ public final class TerminatorAppModel {
                 }
             }
             try await openSSHService.exportHost(request)
-            openSSHResultMessage = FeatureL10n.text("openSSH.host.exported", request.configURL.path)
             await refreshOpenSSH()
             return true
         } catch { errorMessage = error.localizedDescription; return false }
@@ -276,20 +286,102 @@ public final class TerminatorAppModel {
     public func connect(_ host: HostProfile, with terminal: TerminalApplication) async {
         guard capabilities.externalTerminal, let externalTerminalService else { return }
         connectionHost = host
+        connectionTerminal = terminal
         connectionPhase = .resolving
+        hostConnectionPhases[host.id] = .resolving
+        beginMonitoringConnection(hostID: host.id, service: externalTerminalService)
         do {
             try await externalTerminalService.connect(host: host, terminal: terminal)
             connectionPhase = .connected
+            hostConnectionPhases[host.id] = .connected
         } catch is CancellationError {
             connectionPhase = .disconnected
+            hostConnectionPhases[host.id] = .disconnected
+            stopMonitoringConnection(hostID: host.id)
         } catch {
             connectionPhase = .failed(message: error.localizedDescription)
+            hostConnectionPhases[host.id] = .failed(message: error.localizedDescription)
+            stopMonitoringConnection(hostID: host.id)
         }
+    }
+
+    public func connectionPhase(for hostID: UUID) -> SSHConnectionPhase {
+        hostConnectionPhases[hostID] ?? .disconnected
+    }
+
+    public func disconnect(_ host: HostProfile) async {
+        guard let externalTerminalService else { return }
+        connectionPrompts.cancel()
+        await externalTerminalService.disconnect(hostID: host.id)
+        stopMonitoringConnection(hostID: host.id)
+        hostConnectionPhases[host.id] = .disconnected
+        if connectionHost?.id == host.id {
+            connectionHost = nil
+            connectionTerminal = nil
+            connectionPhase = .disconnected
+        }
+    }
+
+    public func retryConnection() async {
+        guard let host = connectionHost, let terminal = connectionTerminal else { return }
+        await connect(host, with: terminal)
+    }
+
+    public func makeConnectionCommand() async -> String? {
+        guard let host = connectionHost, let externalTerminalService else { return nil }
+        do {
+            return try await externalTerminalService.makeConnectionCommand(host: host)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    public func cancelConnectionPresentation() async {
+        guard let host = connectionHost else {
+            dismissConnection()
+            return
+        }
+        if case .connected = connectionPhase {
+            dismissConnection()
+            return
+        }
+        connectionPrompts.cancel()
+        if let externalTerminalService {
+            await externalTerminalService.disconnect(hostID: host.id)
+        }
+        stopMonitoringConnection(hostID: host.id)
+        hostConnectionPhases[host.id] = .disconnected
+        connectionHost = nil
+        connectionTerminal = nil
+        connectionPhase = .disconnected
+    }
+
+    private func beginMonitoringConnection(
+        hostID: UUID,
+        service: any ExternalTerminalConnecting
+    ) {
+        connectionMonitors[hostID]?.cancel()
+        connectionMonitors[hostID] = Task { [weak self] in
+            while !Task.isCancelled {
+                let phase = await service.state(for: hostID)
+                guard !Task.isCancelled, let self else { return }
+                self.hostConnectionPhases[hostID] = phase
+                if self.connectionHost?.id == hostID { self.connectionPhase = phase }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
+    }
+
+    private func stopMonitoringConnection(hostID: UUID) {
+        connectionMonitors[hostID]?.cancel()
+        connectionMonitors[hostID] = nil
     }
 
     public func dismissConnection() {
         connectionPrompts.cancel()
         connectionHost = nil
+        connectionTerminal = nil
         connectionPhase = .disconnected
     }
 
@@ -318,7 +410,8 @@ public final class TerminatorAppModel {
     }
 
     public func saveHost(_ draft: HostDraft) async -> Bool {
-        var newPasswordID: SecretID?
+        var newPasswordIDs: [SecretID] = []
+        var replacedPasswordIDs: [SecretID] = []
         do {
             let existing = draft.id.flatMap { id in hosts.first(where: { $0.id == id }) }
             let now = Date.now
@@ -332,16 +425,18 @@ public final class TerminatorAppModel {
                     case .accessKey(let credentialID):
                         methods.append(.accessKey(credentialID: credentialID))
                     case .password(let existingSecretID):
-                        let value = method.password.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !value.isEmpty {
+                        let value = method.password
+                        let shouldReplace = method.passwordChanged || (existingSecretID == nil && !value.isEmpty)
+                        if shouldReplace, !value.isEmpty {
                             let secretID = SecretID()
                             try await secretStore.store(Data(value.utf8), for: secretID)
-                            newPasswordID = secretID
+                            newPasswordIDs.append(secretID)
                             methods.append(.password(secretID: secretID))
+                            if let existingSecretID { replacedPasswordIDs.append(existingSecretID) }
+                        } else if shouldReplace, let existingSecretID {
+                            replacedPasswordIDs.append(existingSecretID)
                         } else if let existingSecretID {
                             methods.append(.password(secretID: existingSecretID))
-                        } else {
-                            throw CredentialValidationError.missingSecret
                         }
                     }
                 }
@@ -364,16 +459,38 @@ public final class TerminatorAppModel {
             )
             do { try await hostRepository.saveHost(host) }
             catch {
-                if let newPasswordID { try? await secretStore.purge(id: newPasswordID) }
+                for id in newPasswordIDs { try? await secretStore.purge(id: id) }
                 throw error
             }
+            for id in replacedPasswordIDs { try? await secretStore.purge(id: id) }
             await load()
             return true
         } catch {
-            if let newPasswordID { try? await secretStore.purge(id: newPasswordID) }
+            for id in newPasswordIDs { try? await secretStore.purge(id: id) }
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    public func loadHostPassword(into draft: HostDraft) async -> HostDraft {
+        var copy = draft
+        guard let index = copy.authenticationMethods.firstIndex(where: { method in
+            if case .password(let id) = method.kind { return id != nil }
+            return false
+        }), case .password(let secretID?) = copy.authenticationMethods[index].kind else {
+            return copy
+        }
+        do {
+            let data = try await secretStore.read(id: secretID)
+            guard let value = String(data: data, encoding: .utf8) else {
+                throw CredentialValidationError.missingSecret
+            }
+            copy.authenticationMethods[index].password = value
+            copy.authenticationMethods[index].passwordChanged = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return copy
     }
 
     public func deleteHost(id: UUID) async {
@@ -545,6 +662,21 @@ public final class TerminatorAppModel {
                 return false
             }
         }
+        if draft.privateKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if !draft.passphrase.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                errorMessage = "Unlock Private Key first."
+                return false
+            }
+            do {
+                credential.label = resolvedAccessKeyLabel(for: draft)
+                try await credentialRepository.saveCredential(credential)
+                await load()
+                return true
+            } catch {
+                errorMessage = error.localizedDescription
+                return false
+            }
+        }
         guard draft.passphrase == draft.passphraseConfirmation else {
             errorMessage = "Passphrases do not match."
             return false
@@ -665,7 +797,8 @@ public final class TerminatorAppModel {
     }
 
     public func saveIdentity(_ draft: IdentityDraft) async -> Bool {
-        var newPasswordID: SecretID?
+        var newPasswordIDs: [SecretID] = []
+        var replacedPasswordIDs: [SecretID] = []
         do {
             let existing = draft.id.flatMap { id in identities.first(where: { $0.id == id }) }
             let now = Date.now
@@ -675,19 +808,21 @@ public final class TerminatorAppModel {
                 case .accessKey(let credentialID):
                     methods.append(.accessKey(credentialID: credentialID))
                 case .password(let existingSecretID):
-                    let value = method.password.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !value.isEmpty {
+                    let value = method.password
+                    let shouldReplace = method.passwordChanged || (existingSecretID == nil && !value.isEmpty)
+                    if shouldReplace, !value.isEmpty {
                         let secretID = SecretID()
                         guard let data = value.data(using: .utf8) else {
                             throw CredentialValidationError.missingSecret
                         }
                         try await secretStore.store(data, for: secretID)
-                        newPasswordID = secretID
+                        newPasswordIDs.append(secretID)
                         methods.append(.password(secretID: secretID))
+                        if let existingSecretID { replacedPasswordIDs.append(existingSecretID) }
+                    } else if shouldReplace, let existingSecretID {
+                        replacedPasswordIDs.append(existingSecretID)
                     } else if let existingSecretID {
                         methods.append(.password(secretID: existingSecretID))
-                    } else {
-                        throw CredentialValidationError.missingSecret
                     }
                 }
             }
@@ -702,16 +837,38 @@ public final class TerminatorAppModel {
             )
             do { try await identityRepository.saveIdentity(identity) }
             catch {
-                if let newPasswordID { try? await secretStore.purge(id: newPasswordID) }
+                for id in newPasswordIDs { try? await secretStore.purge(id: id) }
                 throw error
             }
+            for id in replacedPasswordIDs { try? await secretStore.purge(id: id) }
             await load()
             return true
         } catch {
-            if let newPasswordID { try? await secretStore.purge(id: newPasswordID) }
+            for id in newPasswordIDs { try? await secretStore.purge(id: id) }
             errorMessage = error.localizedDescription
             return false
         }
+    }
+
+    public func loadIdentityPassword(into draft: IdentityDraft) async -> IdentityDraft {
+        var copy = draft
+        guard let index = copy.authenticationMethods.firstIndex(where: { method in
+            if case .password(let id) = method.kind { return id != nil }
+            return false
+        }), case .password(let secretID?) = copy.authenticationMethods[index].kind else {
+            return copy
+        }
+        do {
+            let data = try await secretStore.read(id: secretID)
+            guard let value = String(data: data, encoding: .utf8) else {
+                throw CredentialValidationError.missingSecret
+            }
+            copy.authenticationMethods[index].password = value
+            copy.authenticationMethods[index].passwordChanged = false
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return copy
     }
 
     public func deleteIdentity(id: UUID) async {
@@ -815,14 +972,22 @@ public struct HostDraft: Identifiable, Equatable, Sendable {
         usesIdentity = host?.authentication.identityID != nil
         identityID = host?.authentication.identityID
         username = host?.authentication.manualUsername ?? ""
-        authenticationMethods = host?.authentication.authenticationMethods.map { method in
+        let methods: [IdentityDraftMethod] = host?.authentication.authenticationMethods.map { method in
             switch method {
             case .password(let secretID):
-                IdentityDraftMethod(kind: .password(existingSecretID: secretID))
+                return IdentityDraftMethod(kind: .password(existingSecretID: secretID))
             case .accessKey(let credentialID):
-                IdentityDraftMethod(kind: .accessKey(credentialID))
+                return IdentityDraftMethod(kind: .accessKey(credentialID))
             }
         } ?? []
+        let password = methods.first { method in
+            if case .password = method.kind { return true }
+            return false
+        } ?? IdentityDraftMethod(kind: .password(existingSecretID: nil))
+        authenticationMethods = [password] + methods.filter { method in
+            if case .accessKey = method.kind { return true }
+            return false
+        }
         group = host?.group ?? ""
         tagsText = host?.tags.joined(separator: ", ") ?? ""
         notes = host?.notes ?? ""
@@ -883,7 +1048,7 @@ public struct IdentityDraft: Identifiable, Equatable, Sendable {
         id = identity?.id
         name = identity?.name ?? ""
         username = identity?.username ?? ""
-        authenticationMethods = identity?.authenticationMethods.map { method in
+        let methods: [IdentityDraftMethod] = identity?.authenticationMethods.map { method -> IdentityDraftMethod in
             switch method {
             case .password(let secretID):
                 IdentityDraftMethod(kind: .password(existingSecretID: secretID))
@@ -891,6 +1056,14 @@ public struct IdentityDraft: Identifiable, Equatable, Sendable {
                 IdentityDraftMethod(kind: .accessKey(credentialID))
             }
         } ?? []
+        let password = methods.first { method in
+            if case .password = method.kind { return true }
+            return false
+        } ?? IdentityDraftMethod(kind: .password(existingSecretID: nil))
+        authenticationMethods = [password] + methods.filter { method in
+            if case .accessKey = method.kind { return true }
+            return false
+        }
     }
 }
 
@@ -898,6 +1071,7 @@ public struct IdentityDraftMethod: Identifiable, Equatable, Sendable {
     public var id = UUID()
     public var kind: IdentityDraftMethodKind
     public var password = ""
+    public var passwordChanged = false
 
     public init(kind: IdentityDraftMethodKind) { self.kind = kind }
 }

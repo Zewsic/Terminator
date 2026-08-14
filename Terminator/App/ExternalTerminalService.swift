@@ -16,6 +16,31 @@ final class MacConnectionPrompter: SSHConnectionPrompting, @unchecked Sendable {
         return try await center.requestPassphrase(for: credential)
     }
 
+    func requestUsername(for host: HostProfile) async throws -> String {
+        NSApp.activate(ignoringOtherApps: true)
+        return try await center.requestUsername(for: host)
+    }
+
+    func requestPassword(for host: HostProfile, username: String) async throws -> String {
+        NSApp.activate(ignoringOtherApps: true)
+        return try await center.requestPassword(for: host, username: username)
+    }
+
+    func requestAuthentication(
+        for host: HostProfile,
+        username: String,
+        availableAccessKeys: [CredentialMetadata],
+        availableIdentities: [IdentityProfile]
+    ) async throws -> ConnectionAuthenticationChoice {
+        NSApp.activate(ignoringOtherApps: true)
+        return try await center.requestAuthentication(
+            for: host,
+            username: username,
+            availableAccessKeys: availableAccessKeys,
+            availableIdentities: availableIdentities
+        )
+    }
+
     func trustNewHost(_ key: KnownHostKey) async throws -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         return try await center.trustNewHost(key)
@@ -51,11 +76,41 @@ actor MacExternalTerminalService: ExternalTerminalConnecting {
     }
 
     func connect(host: HostProfile, terminal: TerminalApplication) async throws {
+        do {
+            try await coordinator.prepare(host: host, prompting: prompting)
+            let descriptor = try await broker.createDescriptor(host: host, terminal: terminal)
+            do {
+                let helper = try await MainActor.run { try helperURL() }
+                let command = await broker.command(for: descriptor, helperURL: helper)
+                try await MainActor.run { try launch(terminal: terminal, command: command, descriptor: descriptor) }
+            } catch {
+                await broker.cancel(descriptor)
+                throw error
+            }
+        } catch {
+            await coordinator.disconnect(hostID: host.id)
+            throw error
+        }
+    }
+
+    func makeConnectionCommand(host: HostProfile) async throws -> String {
         try await coordinator.prepare(host: host, prompting: prompting)
-        let descriptor = try await broker.createDescriptor(host: host, terminal: terminal)
-        let helper = try await MainActor.run { try helperURL() }
-        let command = await broker.command(for: descriptor, helperURL: helper)
-        try await MainActor.run { try launch(terminal: terminal, command: command, descriptor: descriptor) }
+        let descriptor = try await broker.createDescriptor(host: host, terminal: .other)
+        do {
+            let helper = try await MainActor.run { try helperURL() }
+            return await broker.command(for: descriptor, helperURL: helper)
+        } catch {
+            await broker.cancel(descriptor)
+            throw error
+        }
+    }
+
+    func state(for hostID: UUID) async -> SSHConnectionPhase {
+        await coordinator.state(for: hostID)
+    }
+
+    func disconnect(hostID: UUID) async {
+        await coordinator.disconnect(hostID: hostID)
     }
 }
 

@@ -97,6 +97,17 @@ struct TerminatorAppModelTests {
         #expect(try await secrets.read(id: identitySecretID) == Data("identity-secret".utf8))
         #expect(model.credentials.isEmpty)
 
+        var editableIdentity = await model.loadIdentityPassword(into: IdentityDraft(identity: savedIdentity))
+        let passwordIndex = try #require(editableIdentity.authenticationMethods.firstIndex {
+            if case .password = $0.kind { return true }
+            return false
+        })
+        #expect(editableIdentity.authenticationMethods[passwordIndex].password == "identity-secret")
+        editableIdentity.authenticationMethods[passwordIndex].password = ""
+        editableIdentity.authenticationMethods[passwordIndex].passwordChanged = true
+        #expect(await model.saveIdentity(editableIdentity))
+        #expect(model.identities.first?.passwordSecretID == nil)
+
         var host = HostDraft()
         host.displayName = "Manual"
         host.hostname = "manual.example.com"

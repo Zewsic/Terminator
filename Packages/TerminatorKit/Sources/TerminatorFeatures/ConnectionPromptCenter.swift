@@ -5,6 +5,14 @@ import TerminatorCore
 public struct ConnectionPromptRequest: Identifiable, Sendable {
     public enum Kind: Sendable {
         case passphrase(credential: CredentialMetadata)
+        case username(host: HostProfile)
+        case password(host: HostProfile, username: String)
+        case authentication(
+            host: HostProfile,
+            username: String,
+            availableAccessKeys: [CredentialMetadata],
+            availableIdentities: [IdentityProfile]
+        )
         case trustNewHost(KnownHostKey)
         case replaceHostKey(previous: KnownHostKey, presented: KnownHostKey)
     }
@@ -20,6 +28,7 @@ public struct ConnectionPromptRequest: Identifiable, Sendable {
 
 private enum ConnectionPromptAnswer: Sendable {
     case text(String)
+    case authentication(ConnectionAuthenticationChoice)
     case confirmed
 }
 
@@ -36,6 +45,13 @@ public final class ConnectionPromptCenter {
         self.continuation = nil
         request = nil
         continuation.resume(returning: text.isEmpty ? .confirmed : .text(text))
+    }
+
+    public func submit(authentication: ConnectionAuthenticationChoice) {
+        guard let continuation else { return }
+        self.continuation = nil
+        request = nil
+        continuation.resume(returning: .authentication(authentication))
     }
 
     public func cancel() {
@@ -63,6 +79,38 @@ extension ConnectionPromptCenter: SSHConnectionPrompting {
             throw CancellationError()
         }
         return value
+    }
+
+    public func requestUsername(for host: HostProfile) async throws -> String {
+        guard case .text(let value) = try await ask(.username(host: host)), !value.isEmpty else {
+            throw CancellationError()
+        }
+        return value
+    }
+
+    public func requestPassword(for host: HostProfile, username: String) async throws -> String {
+        guard case .text(let value) = try await ask(.password(host: host, username: username)), !value.isEmpty else {
+            throw CancellationError()
+        }
+        return value
+    }
+
+    public func requestAuthentication(
+        for host: HostProfile,
+        username: String,
+        availableAccessKeys: [CredentialMetadata],
+        availableIdentities: [IdentityProfile]
+    ) async throws -> ConnectionAuthenticationChoice {
+        guard case .authentication(let choice) = try await ask(.authentication(
+            host: host,
+            username: username,
+            availableAccessKeys: availableAccessKeys,
+            availableIdentities: availableIdentities
+        )), !choice.username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            choice.identityID != nil || choice.password?.isEmpty == false || choice.credentialID != nil else {
+            throw CancellationError()
+        }
+        return choice
     }
 
     public func trustNewHost(_ key: KnownHostKey) async throws -> Bool {

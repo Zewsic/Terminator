@@ -209,12 +209,44 @@ struct AccessKeyServiceTests {
         else { Issue.record("Expected software key first") }
         if case .password = result.methods[1] {} else { Issue.record("Expected password second") }
     }
+
+    @Test("Resolver prompts for missing identity username and password")
+    func resolverPromptsForIncompleteIdentity() async throws {
+        let identity = IdentityProfile(name: "", username: "", authenticationMethods: [])
+        let catalog = InMemoryTerminatorStore(identities: [identity])
+        let prompt = CountingPrompt()
+        let resolver = AuthenticationResolver(
+            credentialRepository: catalog,
+            identityRepository: catalog,
+            secretStore: InMemorySecretStore()
+        )
+
+        let result = try await resolver.resolve(
+            host: HostProfile(displayName: "Incomplete", hostname: "host.example.com", authentication: .identity(identity.id)),
+            prompting: prompt
+        )
+
+        #expect(result.username == "test-user")
+        #expect(result.methods.count == 1)
+        #expect(await prompt.usernameCount == 1)
+        #expect(await prompt.passwordCount == 1)
+    }
 }
 
 private actor CountingPrompt: CredentialPrompting {
     private(set) var count = 0
+    private(set) var usernameCount = 0
+    private(set) var passwordCount = 0
     func requestPassphrase(for credential: CredentialMetadata) -> String {
         count += 1
         return "phrase"
+    }
+    func requestUsername(for host: HostProfile) -> String {
+        usernameCount += 1
+        return "test-user"
+    }
+    func requestPassword(for host: HostProfile, username: String) -> String {
+        passwordCount += 1
+        return "test-password"
     }
 }

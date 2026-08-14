@@ -5,6 +5,7 @@ struct HistoryView: View {
     @Environment(TerminatorAppModel.self) private var model
     @State private var filter: HistoryEntity?
     @State private var pendingRestore: HistoryEntry?
+    @State private var selectedEntryID: UUID?
 
     private var entries: [HistoryEntry] {
         guard let filter else { return model.history }
@@ -17,10 +18,11 @@ struct HistoryView: View {
                 ContentUnavailableView(
                     "No history yet",
                     systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
-                    description: Text("Host, identity, and credential metadata changes will appear here.")
+                    description: Text(FeatureL10n.text("ui.history.view.1"))
                 )
             } else {
-                List(entries) { entry in
+                InspectorLayout {
+                    List(entries, selection: $selectedEntryID) { entry in
                     HStack(alignment: .top, spacing: 12) {
                         Image(systemName: icon(for: entry.operation))
                             .foregroundStyle(color(for: entry.operation))
@@ -37,39 +39,54 @@ struct HistoryView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
-                        Button("Revert") { pendingRestore = entry }
+                        Button(FeatureL10n.text("ui.history.view.2")) { pendingRestore = entry }
                             .disabled(entry.operation == .purged)
                     }
                     .padding(.vertical, 4)
+                    .tag(entry.id)
                 }
                 .accessibilityIdentifier("history-list")
+                } inspector: {
+                    if let entry = entries.first(where: { $0.id == selectedEntryID }) {
+                        HistoryInspector(entry: entry, summary: summary(for: entry)) { selectedEntryID = nil }
+                    }
+                } onContentInteraction: { selectedEntryID = nil }
             }
         }
-        .navigationTitle("History")
+        .navigationTitle(FeatureL10n.text("ui.history.view.11"))
         .toolbar {
-            Picker("Entity", selection: $filter) {
-                Text("All").tag(HistoryEntity?.none)
-                Text("Hosts").tag(Optional(HistoryEntity.host))
-                Text("Credentials").tag(Optional(HistoryEntity.credential))
-                Text("Identities").tag(Optional(HistoryEntity.identity))
+            ToolbarItem(placement: .navigation) {
+                Button("Close inspector", systemImage: "arrow.left.to.line") { selectedEntryID = nil }
+                    .labelStyle(.iconOnly)
+                    .accessibilityLabel("Close inspector")
+                    .disabled(selectedEntryID == nil)
+                    .opacity(selectedEntryID == nil ? 0 : 1)
             }
-            .pickerStyle(.segmented)
-            .frame(width: 260)
+            ToolbarItem(placement: .automatic) {
+                Picker(FeatureL10n.text("ui.history.view.3"), selection: $filter) {
+                    Text(FeatureL10n.text("ui.history.view.4")).tag(HistoryEntity?.none)
+                    Text(FeatureL10n.text("ui.overview.view.8")).tag(Optional(HistoryEntity.host))
+                    Text(FeatureL10n.text("ui.overview.view.9")).tag(Optional(HistoryEntity.credential))
+                    Text(FeatureL10n.text("ui.history.view.7")).tag(Optional(HistoryEntity.identity))
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 260)
+            }
         }
         .confirmationDialog(
             "Revert this change?",
             isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }),
             titleVisibility: .visible
         ) {
-            Button("Revert") {
+            Button(FeatureL10n.text("ui.history.view.2")) {
                 if let pendingRestore {
                     Task { await model.revert(historyEntryID: pendingRestore.id) }
                 }
                 pendingRestore = nil
             }
-            Button("Cancel", role: .cancel) { pendingRestore = nil }
+            Button(FeatureL10n.text("ui.history.view.9"), role: .cancel) { pendingRestore = nil }
         } message: {
-            Text("Reverting creates a new history entry. Existing history is never rewritten.")
+            Text(FeatureL10n.text("ui.history.view.10"))
         }
     }
 
@@ -111,6 +128,28 @@ struct HistoryView: View {
         case .deleted: .orange
         case .restored: .purple
         case .purged: .red
+        }
+    }
+}
+
+private struct HistoryInspector: View {
+    let entry: HistoryEntry
+    let summary: String
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(entry.title).font(.title2.weight(.semibold))
+                Spacer()
+            }
+            .padding()
+            Form {
+                LabeledContent("Operation", value: entry.operation.rawValue.capitalized)
+                LabeledContent("When", value: entry.timestamp.formatted())
+                Section("Details") { Text(summary).textSelection(.enabled) }
+            }
+            .formStyle(.grouped)
         }
     }
 }

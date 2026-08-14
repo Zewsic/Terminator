@@ -32,6 +32,10 @@ struct CredentialIdentityTests {
         #expect(identity.name == "Production")
         #expect(identity.username == "deploy")
         #expect(identity.credentialIDs == [first, second])
+        let empty = try IdentityProfile(name: "", username: "", authenticationMethods: []).validated()
+        #expect(empty.name.isEmpty)
+        #expect(empty.username.isEmpty)
+        #expect(empty.authenticationMethods.isEmpty)
         #expect(throws: IdentityValidationError.duplicateAuthenticationMethod) {
             try IdentityProfile(name: "Duplicate", username: "root", credentialIDs: [first, first]).validated()
         }

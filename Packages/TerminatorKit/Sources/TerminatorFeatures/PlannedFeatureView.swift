@@ -11,7 +11,7 @@ struct PlannedFeatureView: View {
         } description: {
             Text(description)
         } actions: {
-            Text("Planned")
+            Text(FeatureL10n.text("ui.planned.feature.view.1"))
                 .font(.caption.bold())
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)

@@ -7,24 +7,24 @@ struct OverviewView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Infrastructure at a glance")
+                    Text(FeatureL10n.text("ui.overview.view.1"))
                         .font(.largeTitle.bold())
-                    Text("Your local catalog is ready. Live SSH and Docker status arrives in the next milestones.")
+                    Text(FeatureL10n.text("ui.overview.view.2"))
                         .foregroundStyle(.secondary)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
-                    metric(title: "Hosts", value: model.hosts.count, image: "server.rack")
-                    metric(title: "Credentials", value: model.activeCredentials.count, image: "key")
-                    metric(title: "History entries", value: model.history.count, image: "clock")
-                    metric(title: "Demo containers", value: model.containers.count, image: "shippingbox")
+                    metric(title: FeatureL10n.text("ui.overview.view.8"), value: model.hosts.count, image: "server.rack")
+                    metric(title: FeatureL10n.text("ui.overview.view.9"), value: model.activeCredentials.count, image: "key")
+                    metric(title: FeatureL10n.text("ui.overview.view.10"), value: model.history.count, image: "clock")
+                    metric(title: FeatureL10n.text("ui.overview.view.11"), value: model.containers.count, image: "shippingbox")
                 }
 
-                GroupBox("Security baseline") {
+                GroupBox(FeatureL10n.text("ui.overview.view.3")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Label("Secrets are stored in the device-only Keychain", systemImage: "checkmark.shield")
-                        Label("History snapshots contain metadata only", systemImage: "checkmark.shield")
-                        Label("Host-key verification will default to strict trust-on-first-use", systemImage: "checkmark.shield")
+                        Label(FeatureL10n.text("ui.overview.view.4"), systemImage: "checkmark.shield")
+                        Label(FeatureL10n.text("ui.overview.view.5"), systemImage: "checkmark.shield")
+                        Label(FeatureL10n.text("ui.overview.view.6"), systemImage: "checkmark.shield")
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 6)
@@ -33,7 +33,7 @@ struct OverviewView: View {
             .padding(28)
             .frame(maxWidth: 980, alignment: .leading)
         }
-        .navigationTitle("Overview")
+        .navigationTitle(FeatureL10n.text("ui.overview.view.7"))
     }
 
     private func metric(title: String, value: Int, image: String) -> some View {

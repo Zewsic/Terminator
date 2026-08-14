@@ -78,8 +78,52 @@ public protocol UserPresenceAuthorizer: Sendable {
     func authorize(reason: String) async throws
 }
 
+public struct ConnectionAuthenticationChoice: Equatable, Sendable {
+    public var username: String
+    public var identityID: UUID?
+    public var password: String?
+    public var credentialID: UUID?
+
+    public init(
+        username: String = "",
+        identityID: UUID? = nil,
+        password: String? = nil,
+        credentialID: UUID? = nil
+    ) {
+        self.username = username
+        self.identityID = identityID
+        self.password = password
+        self.credentialID = credentialID
+    }
+}
+
 public protocol CredentialPrompting: Sendable {
     func requestPassphrase(for credential: CredentialMetadata) async throws -> String
+    func requestUsername(for host: HostProfile) async throws -> String
+    func requestPassword(for host: HostProfile, username: String) async throws -> String
+    func requestAuthentication(
+        for host: HostProfile,
+        username: String,
+        availableAccessKeys: [CredentialMetadata],
+        availableIdentities: [IdentityProfile]
+    ) async throws -> ConnectionAuthenticationChoice
+}
+
+public extension CredentialPrompting {
+    func requestAuthentication(
+        for host: HostProfile,
+        username: String,
+        availableAccessKeys: [CredentialMetadata],
+        availableIdentities: [IdentityProfile]
+    ) async throws -> ConnectionAuthenticationChoice {
+        let resolvedUsername = username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? try await requestUsername(for: host)
+            : username
+        return .init(
+            username: resolvedUsername,
+            password: try await requestPassword(for: host, username: resolvedUsername)
+        )
+    }
 }
 
 public enum ResolvedAuthenticationMethod: Sendable {

@@ -199,7 +199,6 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
             break
         case .manual(let username, let methods):
             let username = username.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !username.isEmpty else { throw HostValidationError.missingUsername }
             guard Set(methods).count == methods.count else {
                 throw HostValidationError.duplicateAuthenticationMethod
             }

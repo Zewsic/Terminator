@@ -3,7 +3,6 @@ import TerminatorCore
 public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case overview
     case hosts
-    case localTerminal
     case tunnels
     case containers
     case credentials
@@ -17,7 +16,6 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: "Overview"
         case .hosts: "Hosts"
-        case .localTerminal: "Local Terminal"
         case .tunnels: "Tunnels"
         case .containers: "Containers"
         case .credentials: "Credentials"
@@ -31,7 +29,6 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: "square.grid.2x2"
         case .hosts: "server.rack"
-        case .localTerminal: "terminal"
         case .tunnels: "arrow.left.arrow.right"
         case .containers: "shippingbox"
         case .credentials: "key"
@@ -41,7 +38,5 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    public static func available(for capabilities: AppCapabilities) -> [AppSection] {
-        allCases.filter { $0 != .localTerminal || capabilities.localShell }
-    }
+    public static func available(for capabilities: AppCapabilities) -> [AppSection] { allCases }
 }

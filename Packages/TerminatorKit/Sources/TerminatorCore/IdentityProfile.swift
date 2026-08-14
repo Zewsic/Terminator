@@ -102,9 +102,6 @@ public struct IdentityProfile: Codable, Hashable, Identifiable, Sendable {
         var copy = self
         copy.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         copy.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !copy.name.isEmpty else { throw IdentityValidationError.missingName }
-        guard !copy.username.isEmpty else { throw IdentityValidationError.missingUsername }
-        guard !copy.authenticationMethods.isEmpty else { throw IdentityValidationError.missingAuthenticationMethod }
         guard Set(copy.authenticationMethods).count == copy.authenticationMethods.count else {
             throw IdentityValidationError.duplicateAuthenticationMethod
         }

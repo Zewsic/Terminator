@@ -16,16 +16,18 @@ public struct DiscoveredAccessKey: Identifiable, Equatable, Sendable {
     public var publicKey: String
     public var fingerprint: String?
     public var isEncrypted: Bool
+    public var importError: String?
     public var status: OpenSSHDiscoveryStatus
 
     public init(
         label: String, privateKeyURL: URL, publicKeyURL: URL? = nil,
         privateKey: String, publicKey: String = "", fingerprint: String? = nil,
-        isEncrypted: Bool = false, status: OpenSSHDiscoveryStatus = .available
+        isEncrypted: Bool = false, importError: String? = nil,
+        status: OpenSSHDiscoveryStatus = .available
     ) {
         self.label = label; self.privateKeyURL = privateKeyURL; self.publicKeyURL = publicKeyURL
         self.privateKey = privateKey; self.publicKey = publicKey; self.fingerprint = fingerprint
-        self.isEncrypted = isEncrypted; self.status = status
+        self.isEncrypted = isEncrypted; self.importError = importError; self.status = status
     }
 }
 

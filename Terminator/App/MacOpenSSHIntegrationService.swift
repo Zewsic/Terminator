@@ -190,7 +190,8 @@ actor MacOpenSSHIntegrationService: OpenSSHIntegrationService {
                 privateKey: text,
                 publicKey: publicText,
                 fingerprint: publicKeyFingerprint(publicText),
-                isEncrypted: isEncryptedOpenSSHKey(text)
+                isEncrypted: isEncryptedOpenSSHKey(text),
+                importError: unsupportedImportReason(text)
             ))
         }
         return result
@@ -252,6 +253,15 @@ actor MacOpenSSHIntegrationService: OpenSSHIntegrationService {
             .filter { !$0.hasPrefix("---") }.joined()
         guard let decoded = Data(base64Encoded: payload) else { return false }
         return decoded.range(of: Data("bcrypt".utf8)) != nil
+    }
+
+    private func unsupportedImportReason(_ text: String) -> String? {
+        guard !text.contains("BEGIN OPENSSH PRIVATE KEY") else { return nil }
+        let isEncryptedLegacy = text.contains("BEGIN ENCRYPTED PRIVATE KEY")
+            || text.localizedCaseInsensitiveContains("Proc-Type: 4,ENCRYPTED")
+        return isEncryptedLegacy
+            ? "Encrypted legacy PEM and PKCS#8 keys are not supported. Convert the key to OpenSSH format first."
+            : nil
     }
 
     private func tokenize(_ line: String) -> [String] {

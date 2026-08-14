@@ -110,6 +110,9 @@ public struct AttachDescriptor: Codable, Equatable, Sendable {
 public protocol ExternalTerminalConnecting: Sendable {
     func installedApplications() async -> [TerminalApplication]
     func connect(host: HostProfile, terminal: TerminalApplication) async throws
+    func makeConnectionCommand(host: HostProfile) async throws -> String
+    func state(for hostID: UUID) async -> SSHConnectionPhase
+    func disconnect(hostID: UUID) async
 }
 
 public protocol SessionLogExporting: Sendable {

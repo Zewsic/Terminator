@@ -19,8 +19,7 @@ public enum AttachBrokerError: LocalizedError, Sendable {
 
 public actor TerminalAttachBroker {
     private struct Pending: Sendable {
-        var host: HostProfile
-        var terminal: TerminalApplication
+        var session: SSHSessionHandle
         var expiresAt: Date
     }
 
@@ -41,13 +40,28 @@ public actor TerminalAttachBroker {
 
     public func createDescriptor(host: HostProfile, terminal: TerminalApplication) async throws -> AttachDescriptor {
         try await startIfNeeded()
-        removeExpired()
+        await removeExpired()
+        // Opening a child SSH session is the authentication barrier. Do not
+        // launch an external terminal until the server has accepted one of the
+        // configured authentication methods and the PTY channel is usable.
+        let session = try await coordinator.openSession(
+            host: host, terminal: terminal, size: .init(columns: 80, rows: 24)
+        )
         let token = Self.token()
         let expiresAt = Date.now.addingTimeInterval(600)
-        pending[token] = Pending(host: host, terminal: terminal, expiresAt: expiresAt)
+        pending[token] = Pending(session: session, expiresAt: expiresAt)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(600))
+            await self?.expire(token: token)
+        }
         return AttachDescriptor(
-            sessionID: UUID(), socketPath: socketURL.path, token: token, expiresAt: expiresAt
+            sessionID: session.id, socketPath: socketURL.path, token: token, expiresAt: expiresAt
         )
+    }
+
+    public func cancel(_ descriptor: AttachDescriptor) async {
+        guard let value = pending.removeValue(forKey: descriptor.token) else { return }
+        await value.session.close()
     }
 
     public func command(for descriptor: AttachDescriptor, helperURL: URL) -> String {
@@ -57,11 +71,12 @@ public actor TerminalAttachBroker {
     }
 
     fileprivate func claim(token: String, size: TerminalSize) async throws -> SSHSessionHandle {
-        removeExpired()
+        await removeExpired()
         guard let value = pending.removeValue(forKey: token), value.expiresAt > .now else {
             throw AttachBrokerError.expiredOrInvalidToken
         }
-        return try await coordinator.openSession(host: value.host, terminal: value.terminal, size: size)
+        try await value.session.resize(to: size)
+        return value.session
     }
 
     private func startIfNeeded() async throws {
@@ -80,9 +95,17 @@ public actor TerminalAttachBroker {
         _ = Darwin.chmod(socketURL.path, 0o600)
     }
 
-    private func removeExpired() {
+    private func removeExpired() async {
         let now = Date.now
+        let expired = pending.filter { $0.value.expiresAt <= now }
         pending = pending.filter { $0.value.expiresAt > now }
+        for value in expired.values { await value.session.close() }
+    }
+
+    private func expire(token: String) async {
+        guard let value = pending[token], value.expiresAt <= .now else { return }
+        pending[token] = nil
+        await value.session.close()
     }
 
     private static func token() -> String {

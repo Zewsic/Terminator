@@ -119,14 +119,23 @@ Please do not disclose vulnerabilities in public issues. Until a dedicated secur
 
 - [ ] SwiftNIO SSH transport
 - [ ] Password, key, agent, and keyboard-interactive authentication
+- [ ] SSH agent forwarding, disabled by default and enabled explicitly per host
+- [ ] Per-host startup command executed only after successful authentication
+- [ ] Host chaining / jump hosts, including ordered multi-hop chains and OpenSSH `ProxyJump` import/export
+- [ ] Per-host proxy support for direct SSH connections, including SOCKS5 and HTTP CONNECT
+- [ ] Per-host environment variables sent when opening a session, with server rejection handled visibly
 - [ ] SSH certificates as public attachments to matching access keys, including certified-key, CA fingerprint, principals, and validity checks
 - [ ] FIDO2/U2F access keys through a dedicated CTAP2/libfido2 backend with user presence/verification and no stored PIN
 - [ ] Strict `known_hosts` management and host-key change warnings
-- [ ] Multiple sessions, reconnect, jump hosts, and connection multiplexing
+- [ ] Multiple sessions, reconnect, and connection multiplexing
 
 ### 3. Terminal and tunnels
 
 - [ ] VT/xterm-compatible renderer
+- [ ] Per-host Backspace behavior (`Default`, Control-H, or Delete) without changing the global keyboard mapping
+- [ ] Per-host character encoding with UTF-8 as the default and explicit fallback encodings
+- [ ] Per-host terminal appearance/profile selection, including a terminal theme override
+- [ ] Mosh connections with an explicit SSH bootstrap and clear fallback/error handling when Mosh is unavailable
 - [ ] Direct-edition local PTY
 - [ ] Local, remote, and dynamic port forwarding
 - [ ] Saved tunnel profiles and runtime status
@@ -146,13 +155,18 @@ Please do not disclose vulnerabilities in public issues. Until a dedicated secur
 - [ ] Parameterized command snippets
 - [ ] Auditable batch actions
 
-### 6. Sync and recovery
+### 6. Sharing and collaboration
+
+- [ ] Share a host without sharing secrets by default; credentials require a separate explicit, encrypted grant
+- [ ] Define permissions, revocation, audit history, and conflict handling before enabling shared-host editing
+
+### 7. Sync and recovery
 
 - [ ] Client-side encrypted CloudKit or file-based sync
 - [ ] Deterministic conflict resolution
 - [ ] Backup verification and disaster-recovery flow
 
-### 7. Other platforms
+### 8. Other platforms
 
 - [ ] iOS and iPadOS companion targets using the shared package
 - [ ] Evaluate watchOS monitoring and safe, limited actions
