@@ -122,12 +122,12 @@ public enum IdentityValidationError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingName: "An identity name is required."
-        case .missingUsername: "An identity username is required."
-        case .missingAuthenticationMethod: "Add at least one authentication method."
-        case .duplicateAuthenticationMethod: "An authentication method can appear only once."
-        case .multiplePasswords: "An identity can contain only one password."
-        case .identityInUse: "Detach this identity from every host before archiving it."
+        case .missingName: TerminatorCoreLocalization.text(.errorIdentityMissingName)
+        case .missingUsername: TerminatorCoreLocalization.text(.errorIdentityMissingUsername)
+        case .missingAuthenticationMethod: TerminatorCoreLocalization.text(.errorIdentityMissingAuthenticationMethod)
+        case .duplicateAuthenticationMethod: TerminatorCoreLocalization.text(.errorCredentialDuplicateAuthenticationMethod)
+        case .multiplePasswords: TerminatorCoreLocalization.text(.errorIdentityMultiplePasswords)
+        case .identityInUse: TerminatorCoreLocalization.text(.errorIdentityInUse)
         }
     }
 }

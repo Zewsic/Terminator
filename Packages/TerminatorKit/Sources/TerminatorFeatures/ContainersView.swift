@@ -8,10 +8,9 @@ struct ContainersView: View {
     var body: some View {
         Group {
             if model.containers.isEmpty {
-                ContentUnavailableView(
-                    "No demo containers",
+                ContentUnavailableView(FeatureL10n.text(.containersEmpty),
                     systemImage: "shippingbox",
-                    description: Text(FeatureL10n.text("ui.containers.view.1"))
+                    description: Text(FeatureL10n.text(.containersDockerDiscoveryIsPlannedForALater))
                 )
             } else {
                 InspectorLayout {
@@ -26,7 +25,7 @@ struct ContainersView: View {
                                     .font(.caption2.bold())
                                     .foregroundStyle(.secondary)
                             }
-                            Text(FeatureL10n.text("container.summary", container.image, container.endpointName))
+                            Text(FeatureL10n.text(.containerSummary, container.image, container.endpointName))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -42,18 +41,18 @@ struct ContainersView: View {
                 } onContentInteraction: { selectedContainerID = nil }
             }
         }
-        .navigationTitle(FeatureL10n.text("ui.containers.view.3"))
+        .navigationTitle(FeatureL10n.text(.containersContainersDemo))
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button("Close inspector", systemImage: "arrow.left.to.line") { selectedContainerID = nil }
+                Button(FeatureL10n.text(.featureHistoryCloseInspector), systemImage: "arrow.left.to.line") { selectedContainerID = nil }
                     .labelStyle(.iconOnly)
-                    .accessibilityLabel("Close inspector")
+                    .accessibilityLabel(FeatureL10n.text(.featureHistoryCloseInspector))
                     .disabled(selectedContainerID == nil)
                     .opacity(selectedContainerID == nil ? 0 : 1)
             }
         }
         .safeAreaInset(edge: .top) {
-            Label(FeatureL10n.text("ui.containers.view.2"), systemImage: "info.circle")
+            Label(FeatureL10n.text(.containersDemoDataNoDockerDaemonIsContacted), systemImage: "info.circle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 14)
@@ -76,9 +75,9 @@ private struct ContainerInspector: View {
             }
             .padding()
             Form {
-                LabeledContent("Image", value: container.image)
-                LabeledContent("State", value: container.state)
-                LabeledContent("Endpoint", value: container.endpointName)
+                LabeledContent(FeatureL10n.text(.featureContainersImage), value: container.image)
+                LabeledContent(FeatureL10n.text(.featureContainersState), value: container.state)
+                LabeledContent(FeatureL10n.text(.connectionEndpoint), value: container.endpointName)
             }
             .formStyle(.grouped)
         }

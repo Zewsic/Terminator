@@ -132,10 +132,21 @@ public enum OpenSSHExportError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .aliasConflict: "A Host block with this alias already exists. Compare it before updating."
-        case .fileConflict(let url): TerminatorCoreLocalization.text("error.openSSH.fileConflict", url.path)
-        case .invalidDestination: "The OpenSSH export destination is invalid."
+        case .aliasConflict: TerminatorCoreLocalization.text(.errorOpenSSHAliasConflict)
+        case .fileConflict(let url): TerminatorCoreLocalization.text(.errorOpenSSHFileConflict, url.path)
+        case .invalidDestination: TerminatorCoreLocalization.text(.errorOpenSSHInvalidDestination)
         }
+    }
+}
+
+public enum OpenSSHPathPolicy {
+    public static func safeFilename(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let sanitized = String(value.unicodeScalars.map {
+            allowed.contains($0) ? Character(String($0)) : "_"
+        })
+        let trimmed = sanitized.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return trimmed.isEmpty ? "id_terminator" : trimmed
     }
 }
 

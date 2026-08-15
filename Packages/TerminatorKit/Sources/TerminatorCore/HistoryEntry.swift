@@ -48,16 +48,16 @@ public struct HistoryEntry: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var title: String {
-        TerminatorCoreLocalization.text("history.title", entity.displayName, operation.displayName)
+        TerminatorCoreLocalization.text(.historyTitle, entity.displayName, operation.displayName)
     }
 }
 
 private extension HistoryEntity {
     var displayName: String {
         switch self {
-        case .host: "Host"
-        case .credential: "Credential"
-        case .identity: "Identity"
+        case .host: TerminatorCoreLocalization.text(.historyEntityHost)
+        case .credential: TerminatorCoreLocalization.text(.historyEntityCredential)
+        case .identity: TerminatorCoreLocalization.text(.hostUsernameIdentity)
         }
     }
 }
@@ -65,11 +65,11 @@ private extension HistoryEntity {
 private extension HistoryOperation {
     var displayName: String {
         switch self {
-        case .created: "created"
-        case .updated: "updated"
-        case .deleted: "deleted"
-        case .restored: "restored"
-        case .purged: "purged"
+        case .created: TerminatorCoreLocalization.text(.historyOperationCreated)
+        case .updated: TerminatorCoreLocalization.text(.historyOperationUpdated)
+        case .deleted: TerminatorCoreLocalization.text(.historyOperationDeleted)
+        case .restored: TerminatorCoreLocalization.text(.historyOperationRestored)
+        case .purged: TerminatorCoreLocalization.text(.historyOperationPurged)
         }
     }
 }

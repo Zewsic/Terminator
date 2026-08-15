@@ -8,3 +8,4 @@
 "error.protocolError" = "The terminal attach client used an invalid protocol frame.";
 "authentication.secureEnclave.required" = "Touch ID is required to use this SSH key.";
 "session.reconnected" = "Reconnected with a new remote shell";
+"error.authenticationTimedOut" = "Authentication timed out. The server did not complete the SSH login.";

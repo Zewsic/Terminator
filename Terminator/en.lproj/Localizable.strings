@@ -31,19 +31,10 @@
 "error.terminal.openFailed" = "The terminal application rejected the launch request.";
 "openSSH.import.missingUser" = "Host %@ has no User and cannot be imported.";
 "openSSH.import.recursiveInclude" = "Ignored recursive Include: %@";
+"openSSH.encryptedLegacy.unsupported" = "Encrypted legacy PEM and PKCS#8 keys are not supported. Convert the key to OpenSSH format first.";
 "demo.endpoint.production" = "Demo · Production";
 "demo.endpoint.homeLab" = "Demo · Home lab";
 
-"ui.settings.view.1" = "Edition";
-"ui.settings.view.2" = "Distribution";
-"ui.settings.view.3" = "Local shell";
-"ui.settings.view.4" = "External files";
-"ui.settings.view.5" = "Storage";
-"ui.settings.view.6" = "Catalog";
-"ui.settings.view.7" = "Secrets";
-"ui.settings.view.8" = "Cloud sync";
-"ui.settings.view.9" = "Pinned and active sessions are never removed automatically.";
-"ui.settings.view.10" = "Licensing";
-"ui.settings.view.11" = "PolyForm Noncommercial 1.0.0";
-"ui.settings.view.12" = "Commercial licensing";
-"ui.settings.view.13" = "Settings";
+"settings.pinnedAndActiveSessionsAreNeverRemoved" = "Pinned and active sessions are never removed automatically.";
+"settings.polyformNoncommercial100" = "PolyForm Noncommercial 1.0.0";
+"settings.settings" = "Settings";

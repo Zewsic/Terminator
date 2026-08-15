@@ -17,9 +17,9 @@ public enum CredentialKind: String, Codable, CaseIterable, Hashable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .password: "Password"
-        case .accessKey: "Access key"
-        case .legacyPassphrase: "Legacy passphrase"
+        case .password: TerminatorCoreLocalization.text(.credentialKindPassword)
+        case .accessKey: TerminatorCoreLocalization.text(.credentialKindAccessKey)
+        case .legacyPassphrase: TerminatorCoreLocalization.text(.credentialKindLegacyPassphrase)
         }
     }
 }
@@ -31,9 +31,9 @@ public enum ECDSACurve: String, Codable, CaseIterable, Hashable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .p256: "P-256"
-        case .p384: "P-384"
-        case .p521: "P-521"
+        case .p256: TerminatorCoreLocalization.text(.curveP256)
+        case .p384: TerminatorCoreLocalization.text(.curveP384)
+        case .p521: TerminatorCoreLocalization.text(.curveP521)
         }
     }
 
@@ -53,9 +53,9 @@ public enum SSHKeyAlgorithm: Codable, Hashable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .ed25519: "Ed25519"
-        case .ecdsa(let curve): TerminatorCoreLocalization.text("algorithm.ecdsa", curve.displayName)
-        case .rsa(let bitCount): TerminatorCoreLocalization.text("algorithm.rsa", bitCount)
+        case .ed25519: TerminatorCoreLocalization.text(.algorithmEd25519)
+        case .ecdsa(let curve): TerminatorCoreLocalization.text(.algorithmEcdsa, curve.displayName)
+        case .rsa(let bitCount): TerminatorCoreLocalization.text(.algorithmRsa, bitCount)
         }
     }
 
@@ -71,8 +71,8 @@ public enum AccessKeyBackend: String, Codable, CaseIterable, Hashable, Sendable 
 
     public var displayName: String {
         switch self {
-        case .software: "Software"
-        case .secureEnclave: "Secure Enclave"
+        case .software: TerminatorCoreLocalization.text(.backendSoftware)
+        case .secureEnclave: TerminatorCoreLocalization.text(.backendSecureEnclave)
         }
     }
 }
@@ -102,9 +102,9 @@ public enum PassphraseProtection: Codable, Hashable, Sendable {
 
     public var displayName: String {
         switch self {
-        case .none: "No passphrase"
-        case .promptEveryConnection: "Ask every connection"
-        case .saved: "Touch ID every connection"
+        case .none: TerminatorCoreLocalization.text(.passphraseNone)
+        case .promptEveryConnection: TerminatorCoreLocalization.text(.passphrasePromptEveryConnection)
+        case .saved: TerminatorCoreLocalization.text(.passphraseSaved)
         }
     }
 }
@@ -117,8 +117,8 @@ public enum AccessKeyCompatibility: String, Codable, Hashable, Sendable {
     public var warning: String? {
         switch self {
         case .current: nil
-        case .legacyRSA1024: "RSA-1024 is retained only for legacy compatibility."
-        case .needsUpgrade: "Open this key and provide its passphrase to finish migration."
+        case .legacyRSA1024: TerminatorCoreLocalization.text(.compatibilityLegacyRSA1024)
+        case .needsUpgrade: TerminatorCoreLocalization.text(.compatibilityNeedsUpgrade)
         }
     }
 }
@@ -303,17 +303,17 @@ public enum CredentialValidationError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingLabel: "A credential label is required."
-        case .missingSecret: "A secret value is required."
-        case .missingAccessKeyMetadata: "Access-key metadata is required."
-        case .unexpectedAccessKeyMetadata: "Only access keys may contain key metadata."
-        case .missingPublicKey: "A public key is required."
-        case .missingFingerprint: "A public-key fingerprint is required."
-        case .invalidSecureEnclaveAlgorithm: "Secure Enclave keys must use ECDSA P-256."
-        case .invalidSecureEnclavePassphrase: "Secure Enclave keys cannot use a passphrase."
-        case .invalidRSAKeySize: "RSA keys must contain at least 1024 bits."
-        case .duplicateAuthenticationMethod: "An authentication method can appear only once."
-        case .referencedCredentialUnavailable: "A referenced credential is unavailable."
+        case .missingLabel: TerminatorCoreLocalization.text(.errorCredentialMissingLabel)
+        case .missingSecret: TerminatorCoreLocalization.text(.errorCredentialMissingSecret)
+        case .missingAccessKeyMetadata: TerminatorCoreLocalization.text(.errorCredentialMissingAccessKeyMetadata)
+        case .unexpectedAccessKeyMetadata: TerminatorCoreLocalization.text(.errorCredentialUnexpectedAccessKeyMetadata)
+        case .missingPublicKey: TerminatorCoreLocalization.text(.errorCredentialMissingPublicKey)
+        case .missingFingerprint: TerminatorCoreLocalization.text(.errorCredentialMissingFingerprint)
+        case .invalidSecureEnclaveAlgorithm: TerminatorCoreLocalization.text(.errorCredentialInvalidSecureEnclaveAlgorithm)
+        case .invalidSecureEnclavePassphrase: TerminatorCoreLocalization.text(.errorCredentialInvalidSecureEnclavePassphrase)
+        case .invalidRSAKeySize: TerminatorCoreLocalization.text(.errorCredentialInvalidRSAKeySize)
+        case .duplicateAuthenticationMethod: TerminatorCoreLocalization.text(.errorCredentialDuplicateAuthenticationMethod)
+        case .referencedCredentialUnavailable: TerminatorCoreLocalization.text(.errorCredentialReferencedCredentialUnavailable)
         }
     }
 }

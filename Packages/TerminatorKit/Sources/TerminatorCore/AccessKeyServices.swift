@@ -160,16 +160,16 @@ public enum AccessKeyServiceError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .unsupportedFormat: "This private-key format is not supported."
-        case .encryptedLegacyFormatUnsupported: "Encrypted legacy PEM and PKCS#8 keys are not supported. Convert the key to OpenSSH format first."
-        case .invalidPrivateKey: "The private key is invalid."
-        case .invalidPassphrase: "The private-key passphrase is incorrect."
-        case .publicKeyMismatch: "The supplied public key does not match the private key."
-        case .invalidRSAKeySize: "Generate RSA keys with 2048 or 4096 bits."
-        case .secureEnclaveUnavailable: "Secure Enclave is not available on this device."
-        case .secureEnclaveKeyIsNotExportable: "Secure Enclave private keys cannot be exported."
-        case .authorizationCancelled: "System authentication was cancelled."
-        case .passphraseRequired: "Enter this key’s passphrase to continue."
+        case .unsupportedFormat: TerminatorCoreLocalization.text(.errorAccessKeyUnsupportedFormat)
+        case .encryptedLegacyFormatUnsupported: TerminatorCoreLocalization.text(.errorAccessKeyEncryptedLegacyFormatUnsupported)
+        case .invalidPrivateKey: TerminatorCoreLocalization.text(.errorAccessKeyInvalidPrivateKey)
+        case .invalidPassphrase: TerminatorCoreLocalization.text(.errorAccessKeyInvalidPassphrase)
+        case .publicKeyMismatch: TerminatorCoreLocalization.text(.errorAccessKeyPublicKeyMismatch)
+        case .invalidRSAKeySize: TerminatorCoreLocalization.text(.errorAccessKeyInvalidRSAKeySize)
+        case .secureEnclaveUnavailable: TerminatorCoreLocalization.text(.errorAccessKeySecureEnclaveUnavailable)
+        case .secureEnclaveKeyIsNotExportable: TerminatorCoreLocalization.text(.errorAccessKeySecureEnclaveKeyIsNotExportable)
+        case .authorizationCancelled: TerminatorCoreLocalization.text(.errorAccessKeyAuthorizationCancelled)
+        case .passphraseRequired: TerminatorCoreLocalization.text(.errorAccessKeyPassphraseRequired)
         }
     }
 }

@@ -15,10 +15,9 @@ struct HistoryView: View {
     var body: some View {
         Group {
             if model.history.isEmpty {
-                ContentUnavailableView(
-                    "No history yet",
+                ContentUnavailableView(FeatureL10n.text(.historyEmpty),
                     systemImage: "clock.arrow.trianglehead.counterclockwise.rotate.90",
-                    description: Text(FeatureL10n.text("ui.history.view.1"))
+                    description: Text(FeatureL10n.text(.historyHostIdentityAndCredentialMetadataChangesWill))
                 )
             } else {
                 InspectorLayout {
@@ -39,7 +38,7 @@ struct HistoryView: View {
                                 .foregroundStyle(.tertiary)
                         }
                         Spacer()
-                        Button(FeatureL10n.text("ui.history.view.2")) { pendingRestore = entry }
+                        Button(FeatureL10n.text(.historyRevert)) { pendingRestore = entry }
                             .disabled(entry.operation == .purged)
                     }
                     .padding(.vertical, 4)
@@ -53,40 +52,39 @@ struct HistoryView: View {
                 } onContentInteraction: { selectedEntryID = nil }
             }
         }
-        .navigationTitle(FeatureL10n.text("ui.history.view.11"))
+        .navigationTitle(FeatureL10n.text(.historyHistory))
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Button("Close inspector", systemImage: "arrow.left.to.line") { selectedEntryID = nil }
+                Button(FeatureL10n.text(.featureHistoryCloseInspector), systemImage: "arrow.left.to.line") { selectedEntryID = nil }
                     .labelStyle(.iconOnly)
-                    .accessibilityLabel("Close inspector")
+                    .accessibilityLabel(FeatureL10n.text(.featureHistoryCloseInspector))
                     .disabled(selectedEntryID == nil)
                     .opacity(selectedEntryID == nil ? 0 : 1)
             }
             ToolbarItem(placement: .automatic) {
-                Picker(FeatureL10n.text("ui.history.view.3"), selection: $filter) {
-                    Text(FeatureL10n.text("ui.history.view.4")).tag(HistoryEntity?.none)
-                    Text(FeatureL10n.text("ui.overview.view.8")).tag(Optional(HistoryEntity.host))
-                    Text(FeatureL10n.text("ui.overview.view.9")).tag(Optional(HistoryEntity.credential))
-                    Text(FeatureL10n.text("ui.history.view.7")).tag(Optional(HistoryEntity.identity))
+                Picker(FeatureL10n.text(.historyEntity), selection: $filter) {
+                    Text(FeatureL10n.text(.historyAll)).tag(HistoryEntity?.none)
+                    Text(FeatureL10n.text(.overviewHosts)).tag(Optional(HistoryEntity.host))
+                    Text(FeatureL10n.text(.overviewCredentials)).tag(Optional(HistoryEntity.credential))
+                    Text(FeatureL10n.text(.historyIdentities)).tag(Optional(HistoryEntity.identity))
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 260)
             }
         }
-        .confirmationDialog(
-            "Revert this change?",
+        .confirmationDialog(FeatureL10n.text(.historyRevertConfirmationTitle),
             isPresented: Binding(get: { pendingRestore != nil }, set: { if !$0 { pendingRestore = nil } }),
             titleVisibility: .visible
         ) {
-            Button(FeatureL10n.text("ui.history.view.2")) {
+            Button(FeatureL10n.text(.historyRevert)) {
                 if let pendingRestore {
                     Task { await model.revert(historyEntryID: pendingRestore.id) }
                 }
                 pendingRestore = nil
             }
-            Button(FeatureL10n.text("ui.history.view.9"), role: .cancel) { pendingRestore = nil }
+            Button(FeatureL10n.text(.historyCancel), role: .cancel) { pendingRestore = nil }
         } message: {
-            Text(FeatureL10n.text("ui.history.view.10"))
+            Text(FeatureL10n.text(.historyRevertingCreatesANewHistoryEntryExisting))
         }
     }
 
@@ -100,12 +98,12 @@ struct HistoryView: View {
         case .credential:
             if let data = entry.afterSnapshot,
                let credential = try? JSONDecoder().decode(CredentialMetadata.self, from: data) {
-                return FeatureL10n.text("history.credentialSummary", credential.label, credential.kind.displayName)
+                return FeatureL10n.text(.historyCredentialSummary, credential.label, credential.kind.displayName)
             }
         case .identity:
             if let data = entry.afterSnapshot,
                let identity = try? JSONDecoder().decode(IdentityProfile.self, from: data) {
-                return FeatureL10n.text("history.identitySummary", identity.name, identity.username, identity.authenticationMethods.count)
+                return FeatureL10n.text(.historyIdentitySummary, identity.name, identity.username, identity.authenticationMethods.count)
             }
         }
         return entry.entityID.uuidString
@@ -145,9 +143,9 @@ private struct HistoryInspector: View {
             }
             .padding()
             Form {
-                LabeledContent("Operation", value: entry.operation.rawValue.capitalized)
-                LabeledContent("When", value: entry.timestamp.formatted())
-                Section("Details") { Text(summary).textSelection(.enabled) }
+                LabeledContent(FeatureL10n.text(.featureHistoryOperation), value: entry.operation.rawValue.capitalized)
+                LabeledContent(FeatureL10n.text(.featureHistoryWhen), value: entry.timestamp.formatted())
+                Section(FeatureL10n.text(.credentialsDetails)) { Text(summary).textSelection(.enabled) }
             }
             .formStyle(.grouped)
         }

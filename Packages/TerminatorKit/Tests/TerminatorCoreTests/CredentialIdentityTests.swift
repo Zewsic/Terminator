@@ -17,7 +17,10 @@ struct CredentialIdentityTests {
             afterSnapshot: nil
         )
         #expect(entry.title == "Credential restored")
-        #expect(TerminatorCoreLocalization.text("algorithm.rsa", 4096) == "RSA 4096")
+        #expect(
+            TerminatorCoreLocalization.text("algorithm.rsa", locale: Locale(identifier: "en_US"), 4096)
+                == "RSA 4,096"
+        )
     }
 
     @Test("Identity preserves authentication order and rejects duplicates")

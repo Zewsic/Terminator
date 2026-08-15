@@ -11,8 +11,8 @@ public enum AttachBrokerError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .expiredOrInvalidToken: "The attach command has expired or was already used."
-        case .protocolError: "The terminal attach client used an invalid protocol frame."
+        case .expiredOrInvalidToken: SSHL10n.text(.errorExpiredOrInvalidToken)
+        case .protocolError: SSHL10n.text(.errorProtocolError)
         }
     }
 }

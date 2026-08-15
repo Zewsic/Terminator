@@ -222,13 +222,13 @@ public enum HostValidationError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .missingDisplayName: "A display name is required."
-        case .missingHostname: "A hostname is required."
-        case .missingUsername: "A username is required."
-        case .invalidPort: "The port must be between 1 and 65535."
-        case .duplicateAuthenticationMethod: "An authentication method can appear only once."
-        case .referencedIdentityUnavailable: "The selected identity is unavailable."
-        case .referencedCredentialUnavailable: "A selected credential is unavailable."
+        case .missingDisplayName: TerminatorCoreLocalization.text(.errorHostMissingDisplayName)
+        case .missingHostname: TerminatorCoreLocalization.text(.errorHostMissingHostname)
+        case .missingUsername: TerminatorCoreLocalization.text(.errorHostMissingUsername)
+        case .invalidPort: TerminatorCoreLocalization.text(.errorHostInvalidPort)
+        case .duplicateAuthenticationMethod: TerminatorCoreLocalization.text(.errorCredentialDuplicateAuthenticationMethod)
+        case .referencedIdentityUnavailable: TerminatorCoreLocalization.text(.errorHostReferencedIdentityUnavailable)
+        case .referencedCredentialUnavailable: TerminatorCoreLocalization.text(.errorHostReferencedCredentialUnavailable)
         }
     }
 }

@@ -12,11 +12,11 @@ public enum KeychainSecretStoreError: LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .duplicateSecret: "A secret with this identifier already exists."
-        case .secretNotFound: "The requested secret is not available."
-        case .unexpectedData: "Keychain returned an unexpected value."
-        case .accessControlCreationFailed: "Keychain could not create Touch ID protection for this secret."
-        case .securityStatus(let status): SecurityL10n.text("error.securityStatus", status)
+        case .duplicateSecret: SecurityL10n.text(.errorDuplicateSecret)
+        case .secretNotFound: SecurityL10n.text(.errorSecretNotFound)
+        case .unexpectedData: SecurityL10n.text(.errorUnexpectedData)
+        case .accessControlCreationFailed: SecurityL10n.text(.errorAccessControlCreationFailed)
+        case .securityStatus(let status): SecurityL10n.text(.errorSecurityStatus, status)
         }
     }
 }
@@ -66,7 +66,7 @@ public actor KeychainSecretStore: SecretStore {
 
     public func read(id: SecretID) throws -> Data {
         let context = LAContext()
-        context.localizedReason = "Unlock the saved SSH key passphrase"
+        context.localizedReason = SecurityL10n.text(.authenticationUnlockPassphrase)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -51,6 +51,7 @@ public protocol SSHConnectionCoordinating: Sendable {
     func prepare(host: HostProfile, prompting: any SSHConnectionPrompting) async throws
     func openSession(host: HostProfile, terminal: TerminalApplication, size: TerminalSize) async throws -> SSHSessionHandle
     func state(for hostID: UUID) async -> SSHConnectionPhase
+    func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async
 }
 
@@ -84,12 +85,12 @@ public enum TerminalApplication: String, Codable, CaseIterable, Identifiable, Se
     public var id: String { rawValue }
     public var displayName: String {
         switch self {
-        case .terminal: "Terminal"
+        case .terminal: TerminatorCoreLocalization.text(.terminalTerminal)
         case .iTerm2: "iTerm2"
         case .warp: "Warp"
         case .ghostty: "Ghostty"
         case .wezTerm: "WezTerm"
-        case .other: "Other…"
+        case .other: TerminatorCoreLocalization.text(.terminalOther)
         }
     }
 }
@@ -112,6 +113,7 @@ public protocol ExternalTerminalConnecting: Sendable {
     func connect(host: HostProfile, terminal: TerminalApplication) async throws
     func makeConnectionCommand(host: HostProfile) async throws -> String
     func state(for hostID: UUID) async -> SSHConnectionPhase
+    func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async
 }
 

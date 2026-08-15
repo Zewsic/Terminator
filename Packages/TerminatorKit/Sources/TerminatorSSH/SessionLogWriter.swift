@@ -9,8 +9,8 @@ public enum SessionLogError: LocalizedError, Sendable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidFormat: "The session log is damaged or uses an unsupported format."
-        case .missingLog: "The session log file is missing."
+        case .invalidFormat: SSHL10n.text(.errorInvalidLogFormat)
+        case .missingLog: SSHL10n.text(.errorMissingLog)
         }
     }
 }

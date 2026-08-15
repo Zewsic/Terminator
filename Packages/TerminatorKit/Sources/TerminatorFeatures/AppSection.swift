@@ -14,14 +14,14 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
 
     public var title: String {
         switch self {
-        case .overview: "Overview"
-        case .hosts: "Hosts"
-        case .tunnels: "Tunnels"
-        case .containers: "Containers"
-        case .credentials: "Credentials"
-        case .snippets: "Snippets"
-        case .history: "History"
-        case .logs: "Logs"
+        case .overview: FeatureL10n.text(.sectionOverview)
+        case .hosts: FeatureL10n.text(.sectionHosts)
+        case .tunnels: FeatureL10n.text(.sectionTunnels)
+        case .containers: FeatureL10n.text(.sectionContainers)
+        case .credentials: FeatureL10n.text(.sectionCredentials)
+        case .snippets: FeatureL10n.text(.sectionSnippets)
+        case .history: FeatureL10n.text(.sectionHistory)
+        case .logs: FeatureL10n.text(.sectionLogs)
         }
     }
 
