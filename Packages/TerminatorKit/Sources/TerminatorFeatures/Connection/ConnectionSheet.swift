@@ -145,6 +145,13 @@ struct ConnectionSheet: View {
                     fingerprints: [(FeatureL10n.text(.hostkeyPrevious), previous.fingerprint), (FeatureL10n.text(.hostkeyPresented), presented.fingerprint)]
                 )
             }
+        case .keychain(let reason):
+            ConnectionForm(
+                title: FeatureL10n.text(.connectionUnlockKeychain),
+                subtitle: reason
+            ) {
+                EmptyView()
+            }
         }
     }
 
@@ -293,6 +300,8 @@ struct ConnectionSheet: View {
                 .buttonBorderShape(.capsule)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity)
+            case .keychain:
+                primaryButton(FeatureL10n.text(.actionContinue)) { model.connectionPrompts.submit() }
             }
         } else if case .failed = model.connectionPhase {
             VStack(spacing: 12) {
@@ -463,7 +472,7 @@ struct ConnectionSheet: View {
             focusedField = .password
         case .passphrase:
             focusedField = .passphrase
-        case .trustNewHost, .replaceHostKey:
+        case .trustNewHost, .replaceHostKey, .keychain:
             focusedField = nil
         }
     }

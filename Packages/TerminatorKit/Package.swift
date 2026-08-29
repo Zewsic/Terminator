@@ -17,6 +17,7 @@ let package = Package(
         .library(name: "TerminatorFeatures", targets: ["TerminatorFeatures"]),
         .library(name: "TerminatorTestSupport", targets: ["TerminatorTestSupport"]),
         .executable(name: "terminator-attach", targets: ["TerminatorAttach"]),
+        .executable(name: "terminator-service", targets: ["TerminatorConnectionService"]),
     ],
     dependencies: [
         .package(path: "../../Vendor/swift-nio-ssh"),
@@ -52,6 +53,15 @@ let package = Package(
             name: "TerminatorAttach",
             dependencies: ["TerminatorCore"],
             resources: [.process("Resources")]
+        ),
+        .executableTarget(
+            name: "TerminatorConnectionService",
+            dependencies: [
+                "TerminatorCore",
+                "TerminatorPersistence",
+                "TerminatorSecurity",
+                "TerminatorSSH",
+            ]
         ),
         .target(
             name: "CBcryptPBKDF",

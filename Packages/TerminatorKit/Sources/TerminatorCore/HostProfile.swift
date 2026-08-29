@@ -66,6 +66,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
     public var group: String?
     public var tags: [String]
     public var notes: String
+    public var sessionPersistence: SessionPersistence
+    public var remoteShell: RemoteShell
+    public var connectCommands: String
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
@@ -79,6 +82,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         group: String? = nil,
         tags: [String] = [],
         notes: String = "",
+        sessionPersistence: SessionPersistence = .none,
+        remoteShell: RemoteShell = .login,
+        connectCommands: String = "",
         createdAt: Date = .now,
         updatedAt: Date = .now,
         deletedAt: Date? = nil
@@ -91,6 +97,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         self.group = group
         self.tags = tags
         self.notes = notes
+        self.sessionPersistence = sessionPersistence
+        self.remoteShell = remoteShell
+        self.connectCommands = connectCommands
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -107,6 +116,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         tags: [String] = [],
         notes: String = "",
         credentialID: UUID? = nil,
+        sessionPersistence: SessionPersistence = .none,
+        remoteShell: RemoteShell = .login,
+        connectCommands: String = "",
         createdAt: Date = .now,
         updatedAt: Date = .now,
         deletedAt: Date? = nil
@@ -123,6 +135,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
             group: group,
             tags: tags,
             notes: notes,
+            sessionPersistence: sessionPersistence,
+            remoteShell: remoteShell,
+            connectCommands: connectCommands,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -139,7 +154,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, displayName, hostname, port, authentication, username, credentialID
-        case group, tags, notes, createdAt, updatedAt, deletedAt
+        case group, tags, notes, sessionPersistence, remoteShell, connectCommands, createdAt, updatedAt, deletedAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -161,6 +176,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         group = try container.decodeIfPresent(String.self, forKey: .group)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        sessionPersistence = try container.decodeIfPresent(SessionPersistence.self, forKey: .sessionPersistence) ?? .none
+        remoteShell = try container.decodeIfPresent(RemoteShell.self, forKey: .remoteShell) ?? .login
+        connectCommands = try container.decodeIfPresent(String.self, forKey: .connectCommands) ?? ""
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -176,6 +194,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         try container.encodeIfPresent(group, forKey: .group)
         try container.encode(tags, forKey: .tags)
         try container.encode(notes, forKey: .notes)
+        try container.encode(sessionPersistence, forKey: .sessionPersistence)
+        try container.encode(remoteShell, forKey: .remoteShell)
+        try container.encode(connectCommands, forKey: .connectCommands)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)

@@ -40,6 +40,12 @@ enum AppString: String, CaseIterable, Sendable {
     case settingsPinnedAndActiveSessionsAreNeverRemoved = "settings.pinnedAndActiveSessionsAreNeverRemoved"
     case settingsPolyformNoncommercial100 = "settings.polyformNoncommercial100"
     case settingsSettings = "settings.settings"
+    case settingsGeneral = "settings.general"
+    case settingsAccess = "settings.access"
+    case settingsAccessCLI = "settings.access.cli"
+    case settingsAccessCLICaption = "settings.access.cli.caption"
+    case settingsAccessMCP = "settings.access.mcp"
+    case settingsAccessMCPCaption = "settings.access.mcp.caption"
 }
 
 enum AppL10n {

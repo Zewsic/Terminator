@@ -21,12 +21,21 @@ final class SessionChannelBridge: ChannelDuplexHandler, @unchecked Sendable {
     typealias OutboundIn = SSHChannelData
     typealias OutboundOut = SSHChannelData
     private let size: TerminalSize
+    private let remoteCommand: String?
     private let onEvent: @Sendable (SSHSessionEvent) -> Void
     private let onClose: @Sendable (Bool) -> Void
     private var receivedExitStatus = false
 
-    init(size: TerminalSize, onEvent: @escaping @Sendable (SSHSessionEvent) -> Void, onClose: @escaping @Sendable (Bool) -> Void) {
-        self.size = size; self.onEvent = onEvent; self.onClose = onClose
+    init(
+        size: TerminalSize,
+        remoteCommand: String? = nil,
+        onEvent: @escaping @Sendable (SSHSessionEvent) -> Void,
+        onClose: @escaping @Sendable (Bool) -> Void
+    ) {
+        self.size = size
+        self.remoteCommand = remoteCommand
+        self.onEvent = onEvent
+        self.onClose = onClose
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -36,7 +45,13 @@ final class SessionChannelBridge: ChannelDuplexHandler, @unchecked Sendable {
             terminalPixelWidth: 0, terminalPixelHeight: 0, terminalModes: .init([:])
         )
         context.triggerUserOutboundEvent(pty, promise: nil)
-        context.triggerUserOutboundEvent(SSHChannelRequestEvent.ShellRequest(wantReply: true), promise: nil)
+        if let remoteCommand {
+            context.triggerUserOutboundEvent(
+                SSHChannelRequestEvent.ExecRequest(command: remoteCommand, wantReply: true), promise: nil
+            )
+        } else {
+            context.triggerUserOutboundEvent(SSHChannelRequestEvent.ShellRequest(wantReply: true), promise: nil)
+        }
         context.fireChannelActive()
     }
 

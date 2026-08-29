@@ -3,25 +3,13 @@ import Observation
 import TerminatorCore
 
 public struct ConnectionPromptRequest: Identifiable, Sendable {
-    public enum Kind: Sendable {
-        case passphrase(credential: CredentialMetadata)
-        case username(host: HostProfile)
-        case password(host: HostProfile, username: String)
-        case authentication(
-            host: HostProfile,
-            username: String,
-            availableAccessKeys: [CredentialMetadata],
-            availableIdentities: [IdentityProfile]
-        )
-        case trustNewHost(KnownHostKey)
-        case replaceHostKey(previous: KnownHostKey, presented: KnownHostKey)
-    }
+    public typealias Kind = ConnectionPromptKind
 
     public let id: UUID
     public let kind: Kind
 
-    init(kind: Kind) {
-        self.id = UUID()
+    init(id: UUID = UUID(), kind: Kind) {
+        self.id = id
         self.kind = kind
     }
 }
@@ -36,6 +24,9 @@ private enum ConnectionPromptAnswer: Sendable {
 @Observable
 public final class ConnectionPromptCenter {
     public private(set) var request: ConnectionPromptRequest?
+    /// Called immediately before an interactive connection prompt becomes visible.
+    /// The macOS app uses this to reveal a connection started by Spotlight/Raycast.
+    public var onPrompt: (@MainActor @Sendable () -> Void)?
     private var continuation: CheckedContinuation<ConnectionPromptAnswer, any Error>?
 
     public init() {}
@@ -69,6 +60,7 @@ public final class ConnectionPromptCenter {
         return try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
             request = ConnectionPromptRequest(kind: kind)
+            onPrompt?()
         }
     }
 }
@@ -123,5 +115,11 @@ extension ConnectionPromptCenter: SSHConnectionPrompting {
         return true
     }
 
-    public func requiresUserAttention(reason: String) async {}
+    public func requiresUserAttention(reason: String) async {
+        onPrompt?()
+    }
+
+    public func requestKeychainAttention(reason: String) async throws {
+        _ = try await ask(.keychain(reason: reason))
+    }
 }

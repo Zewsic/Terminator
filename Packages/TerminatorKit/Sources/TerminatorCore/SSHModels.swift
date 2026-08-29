@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SSHConnectionPhase: Equatable, Sendable {
+public enum SSHConnectionPhase: Codable, Equatable, Sendable {
     case disconnected
     case resolving
     case verifyingHost(fingerprint: String)
@@ -49,7 +49,12 @@ public struct SSHSessionHandle: Sendable {
 
 public protocol SSHConnectionCoordinating: Sendable {
     func prepare(host: HostProfile, prompting: any SSHConnectionPrompting) async throws
-    func openSession(host: HostProfile, terminal: TerminalApplication, size: TerminalSize) async throws -> SSHSessionHandle
+    func openSession(
+        host: HostProfile,
+        terminal: TerminalApplication,
+        size: TerminalSize,
+        persistence: SessionPersistence
+    ) async throws -> SSHSessionHandle
     func state(for hostID: UUID) async -> SSHConnectionPhase
     func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async

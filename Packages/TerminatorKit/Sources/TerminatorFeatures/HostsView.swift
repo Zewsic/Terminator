@@ -81,10 +81,10 @@ struct HostsView: View {
             }
         }
         .navigationTitle(FeatureL10n.text(.overviewHosts))
-        .searchable(text: $search, prompt: FeatureL10n.text(.hostsSearchHosts))
+        .searchable(text: $search, placement: .toolbar, prompt: FeatureL10n.text(.hostsSearchHosts))
         .searchFocused($isSearchFocused)
         .toolbar {
-            ToolbarItemGroup {
+            ToolbarItem(placement: .primaryAction) {
                 Button(FeatureL10n.text(.hostsAddHost), systemImage: "plus") { openEditor(HostDraft()) }
                     .accessibilityIdentifier("add-host")
             }
@@ -186,6 +186,10 @@ struct HostsView: View {
     private func hostRow(_ host: HostProfile) -> some View {
         HostRow(host: host, username: resolvedUsername(for: host), phase: model.connectionPhase(for: host.id))
             .tag(host.id)
+            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                guard model.capabilities.externalTerminal else { return }
+                Task { await model.connectInBackground(host, with: .terminal) }
+            })
             .contextMenu {
                 if model.capabilities.externalTerminal {
                     Menu(FeatureL10n.text(.hostsConnectWith)) {

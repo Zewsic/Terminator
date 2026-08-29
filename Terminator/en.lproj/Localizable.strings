@@ -38,3 +38,9 @@
 "settings.pinnedAndActiveSessionsAreNeverRemoved" = "Pinned and active sessions are never removed automatically.";
 "settings.polyformNoncommercial100" = "PolyForm Noncommercial 1.0.0";
 "settings.settings" = "Settings";
+"settings.general" = "General";
+"settings.access" = "Access";
+"settings.access.cli" = "Access via CLI";
+"settings.access.cli.caption" = "Raycast, Spotlight, and terminator-service connect.";
+"settings.access.mcp" = "Access via MCP";
+"settings.access.mcp.caption" = "Gives AI agents convenient access to hosts, tunnels, containers, and other Terminator resources.";

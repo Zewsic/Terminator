@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TerminatorCore
 
@@ -28,5 +29,37 @@ struct HostProfileTests {
         #expect(throws: HostValidationError.invalidPort) {
             try host.validated()
         }
+    }
+
+    @Test("Session persistence round-trips through Codable")
+    func sessionPersistenceCodable() throws {
+        let host = HostProfile(
+            displayName: "Lab",
+            hostname: "lab.example.com",
+            username: "root",
+            sessionPersistence: .tmux,
+            connectCommands: "cd /opt\nsource ./env"
+        )
+        let data = try JSONEncoder().encode(host)
+        let decoded = try JSONDecoder().decode(HostProfile.self, from: data)
+        #expect(decoded.sessionPersistence == .tmux)
+        #expect(decoded.remoteShell.preset == .loginShell)
+        #expect(decoded.connectCommands == "cd /opt\nsource ./env")
+
+        struct Legacy: Encodable {
+            var id = UUID()
+            var displayName = "Old"
+            var hostname = "old.example.com"
+            var port = 22
+            var username = "root"
+            var tags: [String] = []
+            var notes = ""
+            var createdAt = Date()
+            var updatedAt = Date()
+        }
+        let legacy = try JSONEncoder().encode(Legacy())
+        let migrated = try JSONDecoder().decode(HostProfile.self, from: legacy)
+        #expect(migrated.sessionPersistence == .none)
+        #expect(migrated.connectCommands.isEmpty)
     }
 }

@@ -71,7 +71,7 @@ struct CredentialsView: View {
             .animation(.easeInOut(duration: 0.22), value: inspectorSessionID))
         }, isInspectorPresented: hasInspector, onContentInteraction: { closeInspector() })
         .navigationTitle(FeatureL10n.text(.overviewCredentials))
-        .searchable(text: $searchText, prompt: "Search identities and credentials")
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search identities and credentials")
         .searchFocused($isSearchFocused)
         .toolbar {
             credentialsToolbar
@@ -140,7 +140,7 @@ struct CredentialsView: View {
 
     @ToolbarContentBuilder
     private var credentialsToolbar: some ToolbarContent {
-        ToolbarItemGroup {
+        ToolbarItemGroup(placement: .primaryAction) {
             addMenu
             Button(FeatureL10n.text(.actionArchive), systemImage: "archivebox") { isArchivePresented = true }
                 .accessibilityIdentifier("archive-button")

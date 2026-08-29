@@ -78,7 +78,7 @@ public protocol UserPresenceAuthorizer: Sendable {
     func authorize(reason: String) async throws
 }
 
-public struct ConnectionAuthenticationChoice: Equatable, Sendable {
+public struct ConnectionAuthenticationChoice: Codable, Equatable, Sendable {
     public var username: String
     public var identityID: UUID?
     public var password: String?

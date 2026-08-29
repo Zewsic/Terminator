@@ -13,6 +13,9 @@ public struct HostDraft: Identifiable, Equatable, Sendable {
     public var group: String
     public var tagsText: String
     public var notes: String
+    public var sessionPersistence: SessionPersistence
+    public var remoteShell: RemoteShell
+    public var connectCommands: String
 
     public init(host: HostProfile? = nil) {
         id = host?.id
@@ -41,6 +44,9 @@ public struct HostDraft: Identifiable, Equatable, Sendable {
         group = host?.group ?? ""
         tagsText = host?.tags.joined(separator: ", ") ?? ""
         notes = host?.notes ?? ""
+        sessionPersistence = host?.sessionPersistence ?? .none
+        remoteShell = host?.remoteShell ?? .login
+        connectCommands = host?.connectCommands ?? ""
     }
 
     public var tags: [String] { tagsText.split(separator: ",").map(String.init) }

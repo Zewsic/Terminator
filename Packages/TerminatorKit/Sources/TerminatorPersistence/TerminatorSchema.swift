@@ -199,14 +199,7 @@ public enum TerminatorSchemaV4: VersionedSchema {
 
 public enum TerminatorSchemaV5: VersionedSchema {
     public static let versionIdentifier = Schema.Version(5, 0, 0)
-    public static var models: [any PersistentModel.Type] { [
-        HostRecord.self,
-        CredentialRecord.self,
-        IdentityRecord.self,
-        ChangeRecord.self,
-        KnownHostRecord.self,
-        SessionLogRecord.self,
-    ] }
+    public static var models: [any PersistentModel.Type] { currentModels }
 }
 
 public enum TerminatorMigrationPlan: SchemaMigrationPlan {
@@ -229,18 +222,49 @@ public enum TerminatorMigrationPlan: SchemaMigrationPlan {
 public enum TerminatorSchema {
     public static let version4 = Schema(versionedSchema: TerminatorSchemaV4.self)
     public static let version5 = Schema(versionedSchema: TerminatorSchemaV5.self)
+    public static let currentModels: [any PersistentModel.Type] = [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        KnownHostRecord.self,
+        SessionLogRecord.self,
+    ]
 
     public static func makeContainer(inMemory: Bool = false) throws -> ModelContainer {
-        let configuration = ModelConfiguration(
-            "Terminator",
-            schema: version5,
-            isStoredInMemoryOnly: inMemory,
-            allowsSave: true
+        let versioned = Schema(versionedSchema: TerminatorSchemaV5.self)
+        if inMemory {
+            return try ModelContainer(
+                for: versioned,
+                migrationPlan: TerminatorMigrationPlan.self,
+                configurations: [
+                    ModelConfiguration("Terminator", schema: versioned, isStoredInMemoryOnly: true, allowsSave: true)
+                ]
+            )
+        }
+        let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Terminator.store")
+        let versionedConfiguration = ModelConfiguration(
+            "Terminator", schema: versioned, url: url, allowsSave: true
         )
-        return try ModelContainer(
-            for: version5,
-            migrationPlan: TerminatorMigrationPlan.self,
-            configurations: [configuration]
-        )
+        do {
+            return try ModelContainer(
+                for: versioned,
+                migrationPlan: TerminatorMigrationPlan.self,
+                configurations: [versionedConfiguration]
+            )
+        } catch {
+            let inferred = Schema(currentModels)
+            return try ModelContainer(
+                for: inferred,
+                configurations: [
+                    ModelConfiguration("Terminator", schema: inferred, url: url, allowsSave: true)
+                ]
+            )
+        }
     }
+}
+
+private extension TerminatorSchemaV5 {
+    static var currentModels: [any PersistentModel.Type] { TerminatorSchema.currentModels }
 }

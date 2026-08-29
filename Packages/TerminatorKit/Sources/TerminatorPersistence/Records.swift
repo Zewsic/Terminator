@@ -18,6 +18,10 @@ final class HostRecord {
     var group: String?
     var tags: [String]
     var notes: String
+    var sessionPersistenceRawValue: String = SessionPersistence.none.rawValue
+    var remoteShellPresetRawValue: String = RemoteShellPreset.loginShell.rawValue
+    var remoteShellCustomPath: String = ""
+    var connectCommands: String = ""
     var createdAt: Date
     var updatedAt: Date
     var deletedAt: Date?
@@ -32,6 +36,10 @@ final class HostRecord {
         group = profile.group
         tags = profile.tags
         notes = profile.notes
+        sessionPersistenceRawValue = profile.sessionPersistence.rawValue
+        remoteShellPresetRawValue = profile.remoteShell.preset.rawValue
+        remoteShellCustomPath = profile.remoteShell.customPath
+        connectCommands = profile.connectCommands
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt
@@ -58,6 +66,12 @@ final class HostRecord {
             group: group,
             tags: tags,
             notes: notes,
+            sessionPersistence: SessionPersistence(rawValue: sessionPersistenceRawValue) ?? .none,
+            remoteShell: RemoteShell(
+                preset: RemoteShellPreset(rawValue: remoteShellPresetRawValue) ?? .loginShell,
+                customPath: remoteShellCustomPath
+            ),
+            connectCommands: connectCommands,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -71,6 +85,10 @@ final class HostRecord {
         group = profile.group
         tags = profile.tags
         notes = profile.notes
+        sessionPersistenceRawValue = profile.sessionPersistence.rawValue
+        remoteShellPresetRawValue = profile.remoteShell.preset.rawValue
+        remoteShellCustomPath = profile.remoteShell.customPath
+        connectCommands = profile.connectCommands
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt

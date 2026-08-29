@@ -1,5 +1,8 @@
 import SwiftData
 import SwiftUI
+#if !APP_STORE
+import AppKit
+#endif
 import TerminatorCore
 import TerminatorFeatures
 import TerminatorPersistence
@@ -12,6 +15,7 @@ import TerminatorSSH
 @MainActor
 struct TerminatorApp: App {
     private let modelContainer: ModelContainer
+    @NSApplicationDelegateAdaptor(TerminatorAppDelegate.self) private var appDelegate
     @State private var appModel: TerminatorAppModel
 
     init() {
@@ -38,34 +42,17 @@ struct TerminatorApp: App {
                 )
             )
             #else
-            let authenticationResolver = AuthenticationResolver(
-                credentialRepository: store, identityRepository: store, secretStore: secretStore
-            )
             let support = try FileManager.default.url(
                 for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
             ).appending(path: "Terminator", directoryHint: .isDirectory)
             let logURL = support.appending(path: "SessionLogs", directoryHint: .isDirectory)
-            let coordinator = NIOSSHConnectionCoordinator(
-                authenticationResolver: authenticationResolver,
-                accessKeyService: accessKeyService,
-                knownHosts: store,
-                logRepository: store,
-                secretStore: secretStore,
-                logBaseURL: logURL
-            )
-            let broker = TerminalAttachBroker(
-                coordinator: coordinator,
-                directoryURL: support.appending(path: "Attach", directoryHint: .isDirectory)
-            )
             let connectionPrompts = ConnectionPromptCenter()
-            let terminalService = MacExternalTerminalService(
-                coordinator: coordinator,
-                broker: broker,
-                prompting: MacConnectionPrompter(center: connectionPrompts)
-            )
+            let spotlightIndexer = SpotlightHostIndexer()
+            let connectionClient = ConnectionServiceClient()
+            let terminalService = MacExternalTerminalService(client: connectionClient)
             let logExporter = MacSessionLogExporter(secretStore: secretStore, baseURL: logURL)
             let openSSHService = MacOpenSSHIntegrationService()
-            _appModel = State(initialValue: TerminatorAppModel(
+            let appModel = TerminatorAppModel(
                 capabilities: .current,
                 hostRepository: store,
                 credentialRepository: store,
@@ -82,7 +69,41 @@ struct TerminatorApp: App {
                 sessionLogExporter: logExporter,
                 knownHostRepository: store,
                 openSSHService: openSSHService
-            ))
+            )
+            connectionPrompts.onPrompt = {
+                appModel.revealBackgroundConnectionIfNeeded()
+                TerminatorMainWindow.reveal()
+            }
+            appModel.onHostCatalogChanged = { hosts in
+                Task {
+                    if AccessPreferencesStore.load().cliEnabled {
+                        await spotlightIndexer.index(hosts)
+                        try? RaycastServerCatalog().write(hosts: hosts, applicationSupportURL: support)
+                    } else {
+                        await spotlightIndexer.clear()
+                    }
+                }
+            }
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name(TerminatorDistributedNotification.accessChanged),
+                object: nil,
+                queue: .main
+            ) { _ in
+                appModel.onHostCatalogChanged?(appModel.hosts)
+            }
+            _appModel = State(initialValue: appModel)
+            TerminatorMainWindow.model = appModel
+            TerminatorGUIActions.revealMain = { TerminatorMainWindow.reveal() }
+            TerminatorGUIActions.connectHost = { hostID in
+                Task { await appModel.connectInBackground(hostID: hostID, with: .terminal) }
+            }
+            Task { await appModel.load() }
+            Task {
+                await connectionClient.setPromptHandler { envelope in
+                    await appModel.answerServicePrompt(envelope)
+                }
+                await ConnectionServiceSupport.ensureRunning()
+            }
             Task.detached {
                 while !Task.isCancelled {
                     let days = max(1, UserDefaults.standard.integer(forKey: "sessionLogRetentionDays"))
@@ -96,11 +117,12 @@ struct TerminatorApp: App {
             }
             #endif
         } catch {
-            fatalError("Unable to initialize Terminator's local store: \(error.localizedDescription)")
+            fatalError("Unable to initialize Terminator's local store: \(error)")
         }
     }
 
     var body: some Scene {
+        #if APP_STORE
         WindowGroup {
             RootView()
                 .environment(appModel)
@@ -108,10 +130,14 @@ struct TerminatorApp: App {
                 .frame(minWidth: 920, minHeight: 620)
         }
         .defaultSize(width: 1180, height: 760)
+        #endif
 
         Settings {
             SettingsView(capabilities: appModel.capabilities)
         }
+        #if !APP_STORE
+        .defaultLaunchBehavior(.suppressed)
+        #endif
     }
 }
 

@@ -252,6 +252,32 @@ struct TerminatorStoreTests {
         #expect(try await store.knownHosts(endpoint: endpoint).count == 2)
     }
 
+    @Test("Inferred schema opens a store after new host columns")
+    func inferredSchemaOpensCopiedApplicationStore() async throws {
+        let original = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Terminator.store")
+        guard FileManager.default.fileExists(atPath: original.path) else { return }
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "TerminatorUserStore-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let copy = directory.appending(path: "Terminator.store")
+        try FileManager.default.copyItem(at: original, to: copy)
+        for suffix in ["-wal", "-shm"] {
+            let extra = URL(fileURLWithPath: original.path + suffix)
+            if FileManager.default.fileExists(atPath: extra.path) {
+                try FileManager.default.copyItem(at: extra, to: URL(fileURLWithPath: copy.path + suffix))
+            }
+        }
+        let schema = Schema(TerminatorSchema.currentModels)
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration("Terminator", schema: schema, url: copy, allowsSave: true)]
+        )
+        let store = TerminatorStore(modelContainer: container)
+        _ = try await store.listHosts(includeDeleted: true)
+    }
+
     @Test("Versioned schema migrates v2 password references into embedded methods")
     func migratesVersionTwoStore() async throws {
         let directory = FileManager.default.temporaryDirectory

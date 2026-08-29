@@ -45,7 +45,10 @@ public actor TerminalAttachBroker {
         // launch an external terminal until the server has accepted one of the
         // configured authentication methods and the PTY channel is usable.
         let session = try await coordinator.openSession(
-            host: host, terminal: terminal, size: .init(columns: 80, rows: 24)
+            host: host,
+            terminal: terminal,
+            size: .init(columns: 80, rows: 24),
+            persistence: host.sessionPersistence
         )
         let token = Self.token()
         let expiresAt = Date.now.addingTimeInterval(600)

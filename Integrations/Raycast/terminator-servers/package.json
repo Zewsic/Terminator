@@ -1,0 +1,36 @@
+{
+  "name": "terminator-servers",
+  "version": "1.0.0",
+  "description": "Open saved Terminator SSH servers",
+  "main": "src/search-servers.tsx",
+  "scripts": {
+    "dev": "ray develop",
+    "build": "ray build",
+    "lint": "ray lint"
+  },
+  "dependencies": {
+    "@raycast/api": "^1.100.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "devDependencies": {
+    "@raycast/eslint-config": "^2.0.0",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0"
+  },
+  "schemaVersion": 1,
+  "title": "Terminator Servers",
+  "icon": "assets/icon.png",
+  "author": "zewsic",
+  "license": "MIT",
+  "preferences": [],
+  "commands": [
+    {
+      "name": "search-servers",
+      "title": "Search Terminator Servers",
+      "subtitle": "Terminator",
+      "description": "Open an SSH server in the default macOS Terminal",
+      "mode": "view"
+    }
+  ]
+}

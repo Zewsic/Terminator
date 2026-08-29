@@ -53,6 +53,10 @@
 "error.openSSH.invalidDestination" = "The OpenSSH export destination is invalid.";
 "terminal.terminal" = "Terminal";
 "terminal.other" = "Other…";
+"error.connection.serviceUnavailable" = "The Terminator connection service is not running.";
+"error.connection.promptTimedOut" = "Timed out waiting for a connection prompt.";
+"error.access.cliDisabled" = "CLI access is turned off in Terminator Settings.";
+"error.access.mcpDisabled" = "MCP access is turned off in Terminator Settings.";
 "error.store.hostNotFound" = "The host no longer exists.";
 "error.store.credentialNotFound" = "The credential no longer exists.";
 "error.store.identityNotFound" = "The identity no longer exists.";

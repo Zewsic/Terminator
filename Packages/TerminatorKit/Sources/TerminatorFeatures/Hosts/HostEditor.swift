@@ -54,6 +54,45 @@ struct HostEditor: View {
                         manualAuthenticationFields
                     }
                 }
+                Section {
+                    Picker(FeatureL10n.text(.hostSessionPersistence), selection: $draft.sessionPersistence) {
+                        Text(FeatureL10n.text(.hostSessionPersistenceNone)).tag(SessionPersistence.none)
+                        Text(FeatureL10n.text(.hostSessionPersistenceTmux)).tag(SessionPersistence.tmux)
+                        Text(FeatureL10n.text(.hostSessionPersistenceScreen)).tag(SessionPersistence.screen)
+                    }
+                    if draft.sessionPersistence != .none {
+                        Text(FeatureL10n.text(.hostSessionPersistenceHint))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Picker(FeatureL10n.text(.hostRemoteShell), selection: $draft.remoteShell.preset) {
+                        Text(FeatureL10n.text(.hostRemoteShellLogin)).tag(RemoteShellPreset.loginShell)
+                        Text(FeatureL10n.text(.hostRemoteShellZsh)).tag(RemoteShellPreset.zsh)
+                        Text(FeatureL10n.text(.hostRemoteShellBash)).tag(RemoteShellPreset.bash)
+                        Text(FeatureL10n.text(.hostRemoteShellSh)).tag(RemoteShellPreset.sh)
+                        Text(FeatureL10n.text(.hostRemoteShellFish)).tag(RemoteShellPreset.fish)
+                        Text(FeatureL10n.text(.hostRemoteShellCustom)).tag(RemoteShellPreset.custom)
+                    }
+                    if draft.remoteShell.preset == .custom {
+                        TextField(
+                            FeatureL10n.text(.hostRemoteShellCustomPath),
+                            text: $draft.remoteShell.customPath,
+                            prompt: Text("/usr/local/bin/zsh")
+                        )
+                        .font(.body.monospaced())
+                    }
+                    TextField(
+                        FeatureL10n.text(.hostConnectCommands),
+                        text: $draft.connectCommands,
+                        prompt: Text(FeatureL10n.text(.hostConnectCommandsPrompt)),
+                        axis: .vertical
+                    )
+                    .lineLimit(3...12)
+                    .font(.body.monospaced())
+                } header: {
+                    Text(FeatureL10n.text(.hostConnection))
+                }
+
                 Section(FeatureL10n.text(.hostsOrganization)) {
                     AutocompleteTextField(
                         title: "Group",

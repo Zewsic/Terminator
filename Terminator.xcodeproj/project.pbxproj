@@ -209,20 +209,31 @@
 			name = "Embed Direct attach helper";
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/terminator-attach",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/terminator-service",
+				"$(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Library/LaunchAgents/pro.zewsic.terminator.connection.plist",
 			);
 			shellPath = /bin/zsh;
 			shellScript = (
+				"set -euo pipefail",
 				"if [[ \"$SWIFT_ACTIVE_COMPILATION_CONDITIONS\" == *\"APP_STORE\"* ]]; then",
 				"  rm -f \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"",
+				"  rm -f \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
+				"  rm -rf \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents\"",
 				"  exit 0",
 				"fi",
 				"helper_configuration=debug",
 				"if [[ \"$CONFIGURATION\" == Release* ]]; then helper_configuration=release; fi",
 				"cd \"$SRCROOT/Packages/TerminatorKit\"",
-				"/usr/bin/env swift build --disable-sandbox --product terminator-attach --configuration \"$helper_configuration\"",
+				"/usr/bin/env swift build --disable-sandbox --product terminator-attach --product terminator-service --configuration \"$helper_configuration\"",
 				"mkdir -p \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers\"",
 				"cp \"$SRCROOT/Packages/TerminatorKit/.build/$helper_configuration/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"",
-				"chmod 755 \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"",
+				"cp \"$SRCROOT/Packages/TerminatorKit/.build/$helper_configuration/terminator-service\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
+				"chmod 755 \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
+				"if [[ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" && \"$EXPANDED_CODE_SIGN_IDENTITY\" != \"-\" && -n \"$CODE_SIGN_ENTITLEMENTS\" ]]; then",
+				"  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier pro.zewsic.terminator --options runtime --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
+				"fi",
+				"mkdir -p \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents\"",
+				"cp \"$SRCROOT/Support/LaunchAgents/pro.zewsic.terminator.connection.plist\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents/pro.zewsic.terminator.connection.plist\"",
 				"",
 			);
 		};

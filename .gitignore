@@ -2,5 +2,6 @@
 .codegraph/
 DerivedData/
 .build/
+.build-appstore/
 *.xcuserstate
 xcuserdata/

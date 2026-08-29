@@ -49,6 +49,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         var hostID: UUID
         var terminal: TerminalApplication
         var size: TerminalSize
+        var remoteCommand: String?
         var channel: Channel
         var continuation: AsyncStream<SSHSessionEvent>.Continuation
         var log: SessionLogWriter
@@ -66,6 +67,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
     var sessions: [UUID: ActiveSession] = [:]
     var reconnectTasks: [UUID: Task<Void, Never>] = [:]
     var prepareTasks: [UUID: Task<Void, Error>] = [:]
+    var retainedHosts: Set<UUID> = []
     var stateContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
 
     public init(
@@ -167,10 +169,12 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
                 throw error
             }
             pools[host.id] = Pool(host: host, prompting: prompting, channel: channel)
+            retainedHosts.insert(host.id)
             // A live TCP channel is not yet an authenticated SSH connection.
             // `.connected` is set only after the first child session channel
-            // has been accepted by the server.
-            setPhase(.authenticating, for: host.id)
+            // has been accepted by the server. A retained transport with no
+            // attached terminal still counts as connected for the host list.
+            setPhase(.connected, for: host.id)
         } catch {
             setPhase(.failed(message: error.localizedDescription), for: host.id)
             throw error

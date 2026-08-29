@@ -50,7 +50,7 @@ struct SessionLogsView: View {
                     .disabled(selectedLogID == nil)
                     .opacity(selectedLogID == nil ? 0 : 1)
             }
-            ToolbarItem(placement: .automatic) {
+            ToolbarItem(placement: .primaryAction) {
                 Button(FeatureL10n.text(.sessionLogsRefresh), systemImage: "arrow.clockwise") { Task { await model.load() } }
             }
         }

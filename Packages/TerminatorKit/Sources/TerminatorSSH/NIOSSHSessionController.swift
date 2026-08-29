@@ -12,7 +12,8 @@ extension NIOSSHConnectionCoordinator {
     public func openSession(
         host: HostProfile,
         terminal: TerminalApplication,
-        size: TerminalSize
+        size: TerminalSize,
+        persistence: SessionPersistence
     ) async throws -> SSHSessionHandle {
         guard let pool = pools[host.id], pool.channel.isActive else { throw SSHTransportError.sessionUnavailable }
         let id = UUID()
@@ -22,11 +23,17 @@ extension NIOSSHConnectionCoordinator {
             secretStore: secretStore, baseURL: logBaseURL
         )
         do {
+            let remoteCommand = SessionLaunchCommand.remoteCommand(
+                sessionID: id,
+                persistence: persistence,
+                connectCommands: host.connectCommands,
+                shell: host.remoteShell
+            )
             let child = try await createSessionChannel(
-                transport: pool.channel, sessionID: id, size: size
+                transport: pool.channel, sessionID: id, size: size, remoteCommand: remoteCommand
             )
             sessions[id] = ActiveSession(
-                hostID: host.id, terminal: terminal, size: size, channel: child,
+                hostID: host.id, terminal: terminal, size: size, remoteCommand: remoteCommand, channel: child,
                 continuation: continuation, log: log
             )
             setPhase(.connected, for: host.id)
@@ -45,6 +52,14 @@ extension NIOSSHConnectionCoordinator {
         }
     }
 
+    public func listedSessions() -> [(id: UUID, hostID: UUID)] {
+        sessions.map { (id: $0.key, hostID: $0.value.hostID) }
+    }
+
+    public func writeToSession(_ data: Data, id: UUID) async throws {
+        try await write(data, sessionID: id)
+    }
+
     public func state(for hostID: UUID) -> SSHConnectionPhase { phases[hostID] ?? .disconnected }
 
     public func states(for hostID: UUID) -> AsyncStream<SSHConnectionPhase> {
@@ -59,6 +74,7 @@ extension NIOSSHConnectionCoordinator {
     }
 
     public func disconnect(hostID: UUID) async {
+        retainedHosts.remove(hostID)
         reconnectTasks[hostID]?.cancel()
         reconnectTasks[hostID] = nil
         let ids = sessions.filter { $0.value.hostID == hostID }.map(\.key)
@@ -114,9 +130,15 @@ extension NIOSSHConnectionCoordinator {
         }
     }
 
-    func createSessionChannel(transport: Channel, sessionID: UUID, size: TerminalSize) async throws -> Channel {
+    func createSessionChannel(
+        transport: Channel,
+        sessionID: UUID,
+        size: TerminalSize,
+        remoteCommand: String?
+    ) async throws -> Channel {
         let bridge = SessionChannelBridge(
             size: size,
+            remoteCommand: remoteCommand,
             onEvent: { [weak self] event in Task { await self?.receive(event, sessionID: sessionID) } },
             onClose: { [weak self] exitedNormally in
                 Task { await self?.channelClosed(sessionID: sessionID, exitedNormally: exitedNormally) }
@@ -196,11 +218,10 @@ extension NIOSSHConnectionCoordinator {
         if session.channel.isActive { try? await session.channel.close().get() }
         await session.log.finish()
         session.continuation.finish()
-        if !sessions.values.contains(where: { $0.hostID == session.hostID }),
-           let pool = pools.removeValue(forKey: session.hostID) {
-            pool.intentionalClose = true
-            try? await pool.channel.close().get()
-            setPhase(.disconnected, for: session.hostID)
+        // Closing the last attached terminal must not tear down the pooled
+        // SSH transport. Connections stay until an explicit disconnect.
+        if retainedHosts.contains(session.hostID), pools[session.hostID]?.channel.isActive == true {
+            setPhase(.connected, for: session.hostID)
         }
     }
 

@@ -18,11 +18,16 @@ public final class TerminatorAppModel {
     public var openSSHResultMessage: String?
     public let connectionPrompts: ConnectionPromptCenter
     public var connectionHost: HostProfile?
+    public internal(set) var backgroundConnectionHost: HostProfile?
     public internal(set) var connectionTerminal: TerminalApplication?
     public internal(set) var connectionPhase: SSHConnectionPhase = .disconnected
     public internal(set) var hostConnectionPhases: [UUID: SSHConnectionPhase] = [:]
     public internal(set) var isLoading = false
     public var presentedError: PresentedError?
+    /// Lets platform shells refresh non-secret external search catalogs.
+    public var onHostCatalogChanged: (@MainActor @Sendable ([HostProfile]) -> Void)?
+    /// Direct edition: the window is suppressed for Spotlight/Raycast unless a prompt needs it.
+    public var shouldRevealMainWindow = false
 
     public let capabilities: AppCapabilities
 
@@ -117,6 +122,7 @@ public final class TerminatorAppModel {
         defer { isLoading = false }
         do {
             hosts = try await hostRepository.listHosts(includeDeleted: false)
+            onHostCatalogChanged?(hosts)
             credentials = try await credentialRepository.listCredentials(includeDeleted: true)
             identities = try await identityRepository.listIdentities(includeDeleted: true)
             history = try await historyRepository.listHistory(entity: nil)
