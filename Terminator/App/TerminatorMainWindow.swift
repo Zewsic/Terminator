@@ -20,9 +20,9 @@ enum TerminatorMainWindow {
         }
         let root = RootView()
             .environment(model)
-            .frame(minWidth: 920, minHeight: 620)
+            .frame(minWidth: 1120, minHeight: 768)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
+            contentRect: NSRect(x: 0, y: 0, width: 1180, height: 768),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -35,8 +35,15 @@ enum TerminatorMainWindow {
         window.titlebarAppearsTransparent = true
         window.titlebarSeparatorStyle = .none
         window.contentViewController = NSHostingController(rootView: root)
+        window.minSize = NSSize(width: 1120, height: 768)
         window.center()
         window.setFrameAutosaveName("TerminatorMain")
+        var frame = window.frame
+        if frame.width < 1120 || frame.height < 768 {
+            frame.size.width = max(frame.size.width, 1120)
+            frame.size.height = max(frame.size.height, 768)
+            window.setFrame(frame, display: false)
+        }
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
         Self.window = window

@@ -173,11 +173,7 @@ public struct RootView: View {
         case .hosts:
             HostsView()
         case .tunnels:
-            PlannedFeatureView(
-                title: "Tunnels",
-                systemImage: "arrow.left.arrow.right",
-                description: "Saved local, remote, and dynamic SSH port forwards are on the roadmap."
-            )
+            TunnelsView()
         case .services:
             ServicesView()
         case .credentials:

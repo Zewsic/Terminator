@@ -5,6 +5,7 @@ struct SettingsView: View {
     let capabilities: AppCapabilities
     @AppStorage("sessionLogRetentionDays") private var retentionDays = 90
     @State private var access = AccessPreferencesStore.load()
+    private var dismissedHints = DismissedHintsStore.shared
 
     var body: some View {
         TabView {
@@ -32,6 +33,15 @@ struct SettingsView: View {
                 LabeledContent(AppL10n.text(.settingsCloudSync), value: AppL10n.text(.settingsCloudSyncDisabled))
                 Stepper(AppL10n.text(.settingsRetention, retentionDays), value: $retentionDays, in: 1...3650)
                 Text(AppL10n.text(.settingsPinnedAndActiveSessionsAreNeverRemoved)).font(.caption).foregroundStyle(.secondary)
+            }
+            Section(AppL10n.text(.settingsInterface)) {
+                Button(AppL10n.text(.settingsRestoreHiddenBanners)) {
+                    dismissedHints.restoreAll()
+                }
+                .disabled(!dismissedHints.hasDismissedHints)
+                Text(AppL10n.text(.settingsRestoreHiddenBannersCaption))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section(AppL10n.text(.settingsLicensing)) {
                 Text(AppL10n.text(.settingsPolyformNoncommercial100))

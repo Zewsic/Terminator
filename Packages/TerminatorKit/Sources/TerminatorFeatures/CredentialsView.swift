@@ -25,7 +25,7 @@ struct CredentialsView: View {
     @State private var exportingCredential: CredentialMetadata?
     @State private var isExportingCredential = false
     @State private var collapsedCredentialGroups: Set<String> = []
-    @State private var isImportGroupCollapsed = false
+    private var dismissedHints = DismissedHintsStore.shared
     @State private var pendingExternalKey: ExternalImportAccessKey?
     @State private var pendingExternalIdentity: ExternalImportIdentity?
     @State private var pendingExternalBundle: ExternalImportBundle?
@@ -36,7 +36,10 @@ struct CredentialsView: View {
 
     var body: some View {
         InspectorLayout(content: {
-            credentialsContent
+            VStack(spacing: 0) {
+                CatalogImportBanner(hint: .credentialsImportBanner)
+                credentialsContent
+            }
         }, inspector: {
             AnyView(ZStack {
             if let accessKeyDraft {
@@ -165,8 +168,9 @@ struct CredentialsView: View {
         }
         .sharedBackgroundVisibility(.hidden)
         ToolbarSpacer(.fixed)
-        ToolbarItem {
+        ToolbarItemGroup {
             addMenu
+            ExternalImportMenu(hint: .credentialsImportBanner)
         }
     }
 
@@ -236,56 +240,36 @@ struct CredentialsView: View {
                             }
                         }
                     }
-                    if model.capabilities.externalFileAccess, hasAvailableImports {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.18)) { isImportGroupCollapsed.toggle() }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: isImportGroupCollapsed ? "chevron.right" : "chevron.down")
-                                    .font(.caption.weight(.semibold))
-                                Text(FeatureL10n.text(.externalImportAvailable))
-                                Spacer(minLength: 0)
-                            }.contentShape(Rectangle())
+                    if model.capabilities.externalFileAccess {
+                        ForEach(openSSHKeys) { key in
+                            HStack {
+                                Image(systemName: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(key.importError == nil ? Color.secondary : Color.red)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(key.label).fontWeight(.medium)
+                                    Text(key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path))
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                if key.importError == nil {
+                                    Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredKey(key) }
+                                        .labelStyle(.iconOnly)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .help(key.importError ?? key.privateKeyURL.path)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                        if !isImportGroupCollapsed {
-                            ForEach(model.availableImportSources) { source in
-                                importSourceRow(source)
+                        ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
+                            ForEach(bundle.identities.filter(matchesSearch)) { identity in
+                                externalIdentityRow(identity, bundle: bundle)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
                             }
-                            ForEach(openSSHKeys) { key in
-                                HStack {
-                                    Image(systemName: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill")
-                                        .foregroundStyle(key.importError == nil ? Color.secondary : Color.red)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(key.label).fontWeight(.medium)
-                                        Text(key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path))
-                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                    }
-                                    Spacer()
-                                    if key.importError == nil {
-                                        Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredKey(key) }
-                                            .labelStyle(.iconOnly)
-                                    }
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .help(key.importError ?? key.privateKeyURL.path)
-                            }
-                            ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
-                                ForEach(bundle.identities.filter(matchesSearch)) { identity in
-                                    externalIdentityRow(identity, bundle: bundle)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                }
-                                ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
-                                    externalKeyRow(key, bundle: bundle)
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 8)
-                                }
+                            ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
+                                externalKeyRow(key, bundle: bundle)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
                             }
                         }
                     }
@@ -423,8 +407,14 @@ struct CredentialsView: View {
         selectedCredential = nil
     }
 
+    private var showsImportBanner: Bool {
+        !dismissedHints.isDismissed(.credentialsImportBanner)
+            && model.capabilities.externalFileAccess
+            && !model.importSources.isEmpty
+    }
+
     private var hasAvailableImports: Bool {
-        !model.availableImportSources.isEmpty || !availableOpenSSHKeys.isEmpty
+        showsImportBanner || !availableOpenSSHKeys.isEmpty
             || model.loadedExternalImportBundles.contains { bundle in
                 !bundle.identities.filter(matchesSearch).isEmpty || !bundle.accessKeys.filter(matchesSearch).isEmpty
             }
@@ -449,20 +439,6 @@ struct CredentialsView: View {
                 Text(title)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain)
-    }
-
-    private func importSourceRow(_ source: ExternalImportSource) -> some View {
-        Button { Task { await model.loadImportSource(source) } } label: {
-            HStack(spacing: 10) {
-                Image(systemName: source.kind == .openSSH ? "terminal" : "shippingbox").foregroundStyle(.secondary)
-                Text(FeatureL10n.text(.externalImportLoadFrom, source.displayName)).fontWeight(.medium)
-                Spacer()
-                if model.loadingImportSourceIDs.contains(source.id) { ProgressView().controlSize(.small) }
-                else { Image(systemName: "arrow.down.circle").foregroundStyle(.secondary) }
-            }.contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(model.loadingImportSourceIDs.contains(source.id))
     }
 
     private func externalKeyRow(_ key: ExternalImportAccessKey, bundle: ExternalImportBundle) -> some View {

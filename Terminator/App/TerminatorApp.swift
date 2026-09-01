@@ -129,9 +129,9 @@ struct TerminatorApp: App {
             RootView()
                 .environment(appModel)
                 .task { await appModel.load() }
-                .frame(minWidth: 920, minHeight: 620)
+                .frame(minWidth: 1120, minHeight: 768)
         }
-        .defaultSize(width: 1180, height: 760)
+        .defaultSize(width: 1180, height: 768)
         #endif
 
         Settings {

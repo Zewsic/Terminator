@@ -44,3 +44,6 @@
 "settings.access.cli.caption" = "Raycast, Spotlight, and terminator-service connect.";
 "settings.access.mcp" = "Access via MCP";
 "settings.access.mcp.caption" = "Gives AI agents convenient access to hosts, tunnels, containers, and other Terminator resources.";
+"settings.interface" = "Interface";
+"settings.restoreHiddenBanners" = "Restore Hidden Banners";
+"settings.restoreHiddenBanners.caption" = "Bring back import and other cards you dismissed.";

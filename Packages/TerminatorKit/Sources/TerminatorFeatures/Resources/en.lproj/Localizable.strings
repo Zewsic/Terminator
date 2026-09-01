@@ -386,6 +386,10 @@
 "feature.credentials.createAnIdentityOrAddACredential" = "Create an identity or add a credential to get started.";
 "externalImport.available" = "Available for Import";
 "externalImport.loadFrom" = "Load from %@";
+"externalImport.banner.title" = "Import from other apps";
+"externalImport.banner.subtitle" = "You can easily import your hosts, credentials and tunnels from OpenSSH or Termius.";
+"externalImport.from" = "Import from %@";
+"externalImport.banner.dismiss" = "Dismiss import banner";
 "externalImport.identityDetail" = "Identity · %@";
 "externalImport.accessKeyDetail" = "Access Key · %@";
 "externalImport.identityAction" = "Import Identity";
