@@ -17,6 +17,7 @@ struct IdentityEditor: View {
     @State private var isLoadingStoredPassword: Bool
     let onSave: @MainActor (IdentityDraft) async -> Void
     let inline: Bool
+    let explicitImport: Bool
     let onDraftChange: ((IdentityDraft) -> Void)?
     let isDiscarding: () -> Bool
     let onClose: (() -> Void)?
@@ -24,6 +25,7 @@ struct IdentityEditor: View {
     init(
         draft: IdentityDraft,
         inline: Bool = false,
+        explicitImport: Bool = false,
         onDraftChange: ((IdentityDraft) -> Void)? = nil,
         isDiscarding: @escaping () -> Bool = { false },
         onSave: @escaping @MainActor (IdentityDraft) async -> Void,
@@ -36,13 +38,21 @@ struct IdentityEditor: View {
         })
         self.onSave = onSave
         self.inline = inline
+        self.explicitImport = explicitImport
         self.onDraftChange = onDraftChange
         self.isDiscarding = isDiscarding
         self.onClose = onClose
     }
 
     var body: some View {
-        editorShell(title: draft.id == nil ? "Add Identity" : "Edit Identity", width: inline ? nil : 560, height: inline ? nil : 600, autoSave: inline) {
+        editorShell(
+            title: explicitImport ? FeatureL10n.text(.externalImportIdentityAction) : (draft.id == nil ? "Add Identity" : "Edit Identity"),
+            width: inline ? nil : 560,
+            height: inline ? nil : 600,
+            saveTitle: explicitImport ? FeatureL10n.text(.externalImportIdentityAction) : "Save",
+            autoSave: inline && !explicitImport,
+            trailingActions: explicitImport
+        ) {
             Form {
                 Section {
                     TextField(FeatureL10n.text(.uiField6), text: $draft.name)
@@ -121,7 +131,7 @@ struct IdentityEditor: View {
             close()
         }
         .onDisappear {
-            guard inline && !hasTriggeredSave && !isDiscarding() else { return }
+            guard inline && !explicitImport && !hasTriggeredSave && !isDiscarding() else { return }
             Task { await onSave(draft) }
         }
         .onChange(of: draft) { _, value in onDraftChange?(value) }

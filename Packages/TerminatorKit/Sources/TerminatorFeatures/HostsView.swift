@@ -12,6 +12,9 @@ struct HostsView: View {
     @State private var pendingDelete: HostProfile?
     @State private var exportHost: HostProfile?
     @State private var collapsedHostGroups: Set<String> = []
+    @State private var isImportGroupCollapsed = false
+    @State private var pendingExternalHost: ExternalImportHost?
+    @State private var pendingExternalBundle: ExternalImportBundle?
 
     private struct HostListGroup: Identifiable {
         let id: String
@@ -48,7 +51,7 @@ struct HostsView: View {
 
     var body: some View {
         Group {
-            if model.hosts.isEmpty && availableOpenSSHHosts.isEmpty {
+            if model.hosts.isEmpty && !hasAvailableImports {
                 ContentUnavailableView {
                     Label(FeatureL10n.text(.hostsNoHosts), systemImage: "server.rack")
                 } description: {
@@ -64,7 +67,10 @@ struct HostsView: View {
                 }, inspector: {
                     if let editorDraft {
                         HostEditor(draft: editorDraft, explicitImport: isImportingOpenSSHHost) { savedDraft in
-                            await model.saveHost(savedDraft)
+                            if let host = pendingExternalHost, let bundle = pendingExternalBundle {
+                                return await model.importExternalHost(host, from: bundle, editedDraft: savedDraft)
+                            }
+                            return await model.saveHost(savedDraft)
                         } onClose: {
                             closeInspector()
                         }
@@ -150,32 +156,37 @@ struct HostsView: View {
                     .buttonStyle(.plain)
                 }
             }
-            if model.capabilities.externalFileAccess, !availableOpenSSHHosts.isEmpty {
+            if model.capabilities.externalFileAccess, hasAvailableImports {
                 Section {
-                    ForEach(availableOpenSSHHosts) { host in
-                        HStack {
-                            Image(systemName: "server.rack")
-                                .foregroundStyle(.secondary)
-                            VStack(alignment: .leading) {
-                                Text(host.alias).fontWeight(.medium)
-                                Text("\(host.username)@\(host.hostname):\(host.port)")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
-                                openDiscoveredHost(host)
-                            }
-                            .labelStyle(.iconOnly)
+                    if !isImportGroupCollapsed {
+                        ForEach(model.availableImportSources) { source in
+                            importSourceRow(source)
                         }
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
-                                openDiscoveredHost(host)
+                        ForEach(availableOpenSSHHosts) { host in
+                            HStack {
+                                Image(systemName: "server.rack").foregroundStyle(.secondary)
+                                VStack(alignment: .leading) {
+                                    Text(host.alias).fontWeight(.medium)
+                                    Text("\(host.username)@\(host.hostname):\(host.port)")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
+                                    .labelStyle(.iconOnly)
+                            }
+                            .contentShape(Rectangle())
+                            .contextMenu {
+                                Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
+                            }
+                        }
+                        ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
+                            ForEach(bundle.hosts.filter(matchesSearch)) { host in
+                                externalHostRow(host, bundle: bundle)
                             }
                         }
                     }
                 } header: {
-                    Text(FeatureL10n.text(.hostsAvailableFromOpenssh))
+                    collapsibleHeader(FeatureL10n.text(.externalImportAvailable), collapsed: $isImportGroupCollapsed)
                 }
             }
         }
@@ -217,6 +228,8 @@ struct HostsView: View {
         editorDraft = nil
         exportHost = nil
         isImportingOpenSSHHost = false
+        pendingExternalHost = nil
+        pendingExternalBundle = nil
     }
 
     private func openEditor(_ draft: HostDraft, importingFromOpenSSH: Bool = false) {
@@ -262,6 +275,77 @@ struct HostsView: View {
             }
             openEditor(draft, importingFromOpenSSH: true)
         }
+    }
+
+    private var hasAvailableImports: Bool {
+        !model.availableImportSources.isEmpty || !availableOpenSSHHosts.isEmpty
+            || model.loadedExternalImportBundles.contains { !$0.hosts.filter(matchesSearch).isEmpty }
+    }
+
+    private func matchesSearch(_ host: ExternalImportHost) -> Bool {
+        search.isEmpty || host.label.localizedCaseInsensitiveContains(search)
+            || host.hostname.localizedCaseInsensitiveContains(search)
+            || host.group.localizedCaseInsensitiveContains(search)
+    }
+
+    private func importSourceRow(_ source: ExternalImportSource) -> some View {
+        Button {
+            Task { await model.loadImportSource(source) }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: source.kind == .openSSH ? "terminal" : "shippingbox")
+                    .foregroundStyle(.secondary)
+                Text(FeatureL10n.text(.externalImportLoadFrom, source.displayName)).fontWeight(.medium)
+                Spacer()
+                if model.loadingImportSourceIDs.contains(source.id) { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.down.circle").foregroundStyle(.secondary) }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.loadingImportSourceIDs.contains(source.id))
+    }
+
+    private func externalHostRow(_ host: ExternalImportHost, bundle: ExternalImportBundle) -> some View {
+        Button {
+            var draft = model.externalHostDraft(host, in: bundle)
+            if let existing = model.hosts.first(where: { $0.hostname == host.hostname && $0.port == host.port }) {
+                draft.id = existing.id
+            }
+            closeInspector()
+            pendingExternalHost = host
+            pendingExternalBundle = bundle
+            isImportingOpenSSHHost = true
+            editorSessionID = UUID()
+            editorDraft = draft
+        } label: {
+            HStack {
+                Image(systemName: "server.rack").foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(host.label).fontWeight(.medium)
+                    Text("\(host.hostname):\(host.port) · \(bundle.source.displayName)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func collapsibleHeader(_ title: String, collapsed: Binding<Bool>) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { collapsed.wrappedValue.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapsed.wrappedValue ? "chevron.right" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                Text(title)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func resolvedUsername(for host: HostProfile) -> String {

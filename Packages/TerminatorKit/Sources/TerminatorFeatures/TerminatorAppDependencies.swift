@@ -18,6 +18,7 @@ public struct TerminatorAppDependencies: Sendable {
     public let sessionLogExporter: (any SessionLogExporting)?
     public let knownHostRepository: (any KnownHostRepository)?
     public let openSSHService: (any OpenSSHIntegrationService)?
+    public let externalImportService: (any ExternalImportService)?
 
     public init(
         hostRepository: any HostRepository,
@@ -33,7 +34,8 @@ public struct TerminatorAppDependencies: Sendable {
         sessionLogBaseURL: URL? = nil,
         sessionLogExporter: (any SessionLogExporting)? = nil,
         knownHostRepository: (any KnownHostRepository)? = nil,
-        openSSHService: (any OpenSSHIntegrationService)? = nil
+        openSSHService: (any OpenSSHIntegrationService)? = nil,
+        externalImportService: (any ExternalImportService)? = nil
     ) {
         self.hostRepository = hostRepository
         self.credentialRepository = credentialRepository
@@ -49,5 +51,6 @@ public struct TerminatorAppDependencies: Sendable {
         self.sessionLogExporter = sessionLogExporter
         self.knownHostRepository = knownHostRepository
         self.openSSHService = openSSHService
+        self.externalImportService = externalImportService
     }
 }

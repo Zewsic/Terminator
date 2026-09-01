@@ -384,6 +384,11 @@
 "feature.catalog.form.controls.tag" = "Tag";
 "feature.credentials.noIdentitiesOrCredentials" = "No identities or credentials";
 "feature.credentials.createAnIdentityOrAddACredential" = "Create an identity or add a credential to get started.";
+"externalImport.available" = "Available for Import";
+"externalImport.loadFrom" = "Load from %@";
+"externalImport.identityDetail" = "Identity · %@";
+"externalImport.accessKeyDetail" = "Access Key · %@";
+"externalImport.identityAction" = "Import Identity";
 "feature.archive.archiveIsEmpty" = "Archive is empty";
 "feature.archive.purged" = "Purged";
 "feature.connection.sheet.savedIdentity" = "Saved identity";

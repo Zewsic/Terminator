@@ -15,6 +15,10 @@ public final class TerminatorAppModel {
     public internal(set) var terminalApplications: [TerminalApplication] = [.other]
     public internal(set) var openSSH = OpenSSHDiscoverySnapshot()
     public internal(set) var isScanningOpenSSH = false
+    public internal(set) var importSources: [ExternalImportSource] = []
+    public internal(set) var loadedImportSourceIDs: Set<String> = []
+    public internal(set) var loadingImportSourceIDs: Set<String> = []
+    public internal(set) var externalImportBundles: [String: ExternalImportBundle] = [:]
     public var openSSHResultMessage: String?
     public let connectionPrompts: ConnectionPromptCenter
     public var connectionHost: HostProfile?
@@ -45,6 +49,7 @@ public final class TerminatorAppModel {
     let sessionLogExporter: (any SessionLogExporting)?
     let knownHostRepository: (any KnownHostRepository)?
     let openSSHService: (any OpenSSHIntegrationService)?
+    let externalImportService: (any ExternalImportService)?
     var connectionMonitors: [UUID: Task<Void, Never>] = [:]
 
     public init(
@@ -68,6 +73,7 @@ public final class TerminatorAppModel {
         self.sessionLogExporter = dependencies.sessionLogExporter
         self.knownHostRepository = dependencies.knownHostRepository
         self.openSSHService = dependencies.openSSHService
+        self.externalImportService = dependencies.externalImportService
     }
 
     public convenience init(
@@ -86,7 +92,8 @@ public final class TerminatorAppModel {
         sessionLogBaseURL: URL? = nil,
         sessionLogExporter: (any SessionLogExporting)? = nil,
         knownHostRepository: (any KnownHostRepository)? = nil,
-        openSSHService: (any OpenSSHIntegrationService)? = nil
+        openSSHService: (any OpenSSHIntegrationService)? = nil,
+        externalImportService: (any ExternalImportService)? = nil
     ) {
         self.init(
             capabilities: capabilities,
@@ -104,7 +111,8 @@ public final class TerminatorAppModel {
                 sessionLogBaseURL: sessionLogBaseURL,
                 sessionLogExporter: sessionLogExporter,
                 knownHostRepository: knownHostRepository,
-                openSSHService: openSSHService
+                openSSHService: openSSHService,
+                externalImportService: externalImportService
             ),
             connectionPrompts: connectionPrompts
         )
@@ -131,7 +139,7 @@ public final class TerminatorAppModel {
             if capabilities.externalTerminal, let externalTerminalService {
                 terminalApplications = await externalTerminalService.installedApplications()
             }
-            if capabilities.externalFileAccess, openSSHService != nil { await refreshOpenSSH() }
+            if capabilities.externalFileAccess { await refreshImportSources() }
         } catch {
             present(error)
         }

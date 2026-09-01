@@ -52,6 +52,7 @@ struct TerminatorApp: App {
             let terminalService = MacExternalTerminalService(client: connectionClient)
             let logExporter = MacSessionLogExporter(secretStore: secretStore, baseURL: logURL)
             let openSSHService = MacOpenSSHIntegrationService()
+            let externalImportService = MacTermiusImportService()
             let appModel = TerminatorAppModel(
                 capabilities: .current,
                 hostRepository: store,
@@ -68,7 +69,8 @@ struct TerminatorApp: App {
                 sessionLogBaseURL: logURL,
                 sessionLogExporter: logExporter,
                 knownHostRepository: store,
-                openSSHService: openSSHService
+                openSSHService: openSSHService,
+                externalImportService: externalImportService
             )
             connectionPrompts.onPrompt = {
                 appModel.revealBackgroundConnectionIfNeeded()

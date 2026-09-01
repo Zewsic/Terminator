@@ -25,6 +25,11 @@ struct CredentialsView: View {
     @State private var exportDocument: PrivateKeyDocument?
     @State private var exportingCredential: CredentialMetadata?
     @State private var isExportingCredential = false
+    @State private var collapsedCredentialGroups: Set<String> = []
+    @State private var isImportGroupCollapsed = false
+    @State private var pendingExternalKey: ExternalImportAccessKey?
+    @State private var pendingExternalIdentity: ExternalImportIdentity?
+    @State private var pendingExternalBundle: ExternalImportBundle?
 
     init(isArchivePresented: Binding<Bool>) {
         _isArchivePresented = isArchivePresented
@@ -44,6 +49,9 @@ struct CredentialsView: View {
                     isDiscarding: isDiscarding
                 ) { value in
                     let saved = await model.saveAccessKey(value)
+                    if saved != nil, let key = pendingExternalKey, let bundle = pendingExternalBundle {
+                        model.consumeExternalAccessKey(key, sourceID: bundle.source.id)
+                    }
                     if isExplicitAccessKeyImport, saved != nil { closeInspector() }
                 } onClose: {
                     closeInspector()
@@ -59,8 +67,20 @@ struct CredentialsView: View {
                 .id(inspectorSessionID)
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             } else if let identityDraft {
-                IdentityEditor(draft: identityDraft, inline: true, onDraftChange: updateIdentityDraft, isDiscarding: isDiscarding) { value in
-                    _ = await model.saveIdentity(value)
+                IdentityEditor(
+                    draft: identityDraft,
+                    inline: true,
+                    explicitImport: pendingExternalIdentity != nil,
+                    onDraftChange: updateIdentityDraft,
+                    isDiscarding: isDiscarding
+                ) { value in
+                    if let identity = pendingExternalIdentity, let bundle = pendingExternalBundle {
+                        if await model.importExternalIdentity(identity, from: bundle, editedDraft: value) != nil {
+                            closeInspector()
+                        }
+                    } else {
+                        _ = await model.saveIdentity(value)
+                    }
                 } onClose: {
                     closeInspector()
                 }
@@ -145,7 +165,7 @@ struct CredentialsView: View {
             Button(FeatureL10n.text(.actionArchive), systemImage: "archivebox") { isArchivePresented = true }
                 .accessibilityIdentifier("archive-button")
         }
-        if hasInspector && !isExplicitAccessKeyImport {
+        if hasInspector && !isExplicitAccessKeyImport && pendingExternalIdentity == nil {
             ToolbarItem(placement: .navigation) {
                 ControlGroup {
                     Button(FeatureL10n.text(.actionCancel), systemImage: "xmark") { discardInspector() }
@@ -189,58 +209,70 @@ struct CredentialsView: View {
         let available = activeCredentials
             .filter { matchesSearch($0.label) }
         let openSSHKeys = availableOpenSSHKeys
-        if activeIdentities.isEmpty && activeCredentials.isEmpty && openSSHKeys.isEmpty {
+        if activeIdentities.isEmpty && activeCredentials.isEmpty && !hasAvailableImports {
             ContentUnavailableView {
                 Label(FeatureL10n.text(.featureCredentialsNoIdentitiesOrCredentials), systemImage: "key")
             } description: {
                 Text(FeatureL10n.text(.featureCredentialsCreateAnIdentityOrAddACredential))
             } actions: { addMenu.buttonStyle(.glassProminent).tint(.blue) }
-        } else if identities.isEmpty && available.isEmpty && openSSHKeys.isEmpty {
+        } else if identities.isEmpty && available.isEmpty && !hasAvailableImports {
             ContentUnavailableView.search(text: searchText)
         } else {
             List {
                 if !identities.isEmpty {
-                    Section(FeatureL10n.text(.credentialsIdentity)) { ForEach(identities) { identity in identityRow(identity) } }
+                    Section {
+                        if !collapsedCredentialGroups.contains("identities") {
+                            ForEach(identities) { identity in identityRow(identity) }
+                        }
+                    } header: { sectionHeader(FeatureL10n.text(.credentialsIdentity), id: "identities") }
                 }
                 if !available.isEmpty {
-                    Section(FeatureL10n.text(.sectionCredentials)) { ForEach(available) { credential in credentialRow(credential) } }
-                }
-                if model.capabilities.externalFileAccess, !openSSHKeys.isEmpty {
                     Section {
-                        ForEach(openSSHKeys) { key in
-                            HStack {
-                                if let importError = key.importError {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .foregroundStyle(.red)
-                                        .help(importError)
-                                } else {
-                                    Image(systemName: "key.horizontal")
-                                        .foregroundStyle(.secondary)
-                                }
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(key.label).fontWeight(.medium)
-                                    Text(key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path))
-                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer()
-                                if key.importError == nil {
-                                    Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
-                                        openDiscoveredKey(key)
+                        if !collapsedCredentialGroups.contains("credentials") {
+                            ForEach(available) { credential in credentialRow(credential) }
+                        }
+                    } header: { sectionHeader(FeatureL10n.text(.sectionCredentials), id: "credentials") }
+                }
+                if model.capabilities.externalFileAccess, hasAvailableImports {
+                    Section {
+                        if !isImportGroupCollapsed {
+                            ForEach(model.availableImportSources) { source in importSourceRow(source) }
+                            ForEach(openSSHKeys) { key in
+                                HStack {
+                                    Image(systemName: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill")
+                                        .foregroundStyle(key.importError == nil ? Color.secondary : Color.red)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(key.label).fontWeight(.medium)
+                                        Text(key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path))
+                                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                     }
-                                    .labelStyle(.iconOnly)
+                                    Spacer()
+                                    if key.importError == nil {
+                                        Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredKey(key) }
+                                            .labelStyle(.iconOnly)
+                                    }
                                 }
+                                .help(key.importError ?? key.privateKeyURL.path)
                             }
-                            .help(key.importError ?? key.privateKeyURL.path)
-                            .contentShape(Rectangle())
-                            .contextMenu {
-                                Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
-                                    openDiscoveredKey(key)
+                            ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
+                                ForEach(bundle.identities.filter(matchesSearch)) { identity in
+                                    externalIdentityRow(identity, bundle: bundle)
                                 }
-                                .disabled(key.importError != nil)
+                                ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
+                                    externalKeyRow(key, bundle: bundle)
+                                }
                             }
                         }
                     } header: {
-                        Text(FeatureL10n.text(.hostsAvailableFromOpenssh))
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) { isImportGroupCollapsed.toggle() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isImportGroupCollapsed ? "chevron.right" : "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                Text(FeatureL10n.text(.externalImportAvailable))
+                            }.contentShape(Rectangle())
+                        }.buttonStyle(.plain)
                     }
                 }
             }
@@ -322,6 +354,9 @@ struct CredentialsView: View {
         selectedCredential = nil
         identityDraft = nil
         isImportingOpenSSHKey = false
+        pendingExternalKey = nil
+        pendingExternalIdentity = nil
+        pendingExternalBundle = nil
     }
 
     private func updateAccessKeyDraft(_ draft: AccessKeyDraft) { accessKeyDraft = draft }
@@ -390,6 +425,92 @@ struct CredentialsView: View {
         identityDraft = draft
         accessKeyDraft = nil
         selectedCredential = nil
+    }
+
+    private var hasAvailableImports: Bool {
+        !model.availableImportSources.isEmpty || !availableOpenSSHKeys.isEmpty
+            || model.loadedExternalImportBundles.contains { bundle in
+                !bundle.identities.filter(matchesSearch).isEmpty || !bundle.accessKeys.filter(matchesSearch).isEmpty
+            }
+    }
+
+    private func matchesSearch(_ identity: ExternalImportIdentity) -> Bool {
+        matchesSearch(identity.label) || matchesSearch(identity.username)
+    }
+
+    private func matchesSearch(_ key: ExternalImportAccessKey) -> Bool { matchesSearch(key.label) }
+
+    private func sectionHeader(_ title: String, id: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) {
+                if collapsedCredentialGroups.contains(id) { collapsedCredentialGroups.remove(id) }
+                else { collapsedCredentialGroups.insert(id) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapsedCredentialGroups.contains(id) ? "chevron.right" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                Text(title)
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func importSourceRow(_ source: ExternalImportSource) -> some View {
+        Button { Task { await model.loadImportSource(source) } } label: {
+            HStack(spacing: 10) {
+                Image(systemName: source.kind == .openSSH ? "terminal" : "shippingbox").foregroundStyle(.secondary)
+                Text(FeatureL10n.text(.externalImportLoadFrom, source.displayName)).fontWeight(.medium)
+                Spacer()
+                if model.loadingImportSourceIDs.contains(source.id) { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.down.circle").foregroundStyle(.secondary) }
+            }.contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(model.loadingImportSourceIDs.contains(source.id))
+    }
+
+    private func externalKeyRow(_ key: ExternalImportAccessKey, bundle: ExternalImportBundle) -> some View {
+        Button {
+            closeInspector()
+            pendingExternalKey = key
+            pendingExternalBundle = bundle
+            openAccessKey(model.externalAccessKeyDraft(key), importingFromOpenSSH: true)
+        } label: {
+            importEntityLabel(
+                key.label.isEmpty ? FeatureL10n.text(.credentialsAccessKey) : key.label,
+                detail: FeatureL10n.text(.externalImportAccessKeyDetail, bundle.source.displayName),
+                icon: "key.horizontal"
+            )
+        }.buttonStyle(.plain)
+    }
+
+    private func externalIdentityRow(_ identity: ExternalImportIdentity, bundle: ExternalImportBundle) -> some View {
+        Button {
+            closeInspector()
+            pendingExternalIdentity = identity
+            pendingExternalBundle = bundle
+            isDiscardingInspector = false
+            inspectorSessionID = UUID()
+            identityDraft = model.externalIdentityDraft(identity)
+        } label: {
+            importEntityLabel(
+                identity.label.isEmpty ? identity.username : identity.label,
+                detail: FeatureL10n.text(.externalImportIdentityDetail, bundle.source.displayName),
+                icon: "person.badge.key"
+            )
+        }.buttonStyle(.plain)
+    }
+
+    private func importEntityLabel(_ title: String, detail: String, icon: String) -> some View {
+        HStack {
+            Image(systemName: icon).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).fontWeight(.medium)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
+        }.contentShape(Rectangle())
     }
 
 }
