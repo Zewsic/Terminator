@@ -42,7 +42,6 @@ public struct RootView: View {
                     .sharedBackgroundVisibility(.hidden)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(.container, edges: .top)
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
@@ -75,10 +74,6 @@ public struct RootView: View {
             }
         }
         .background(WindowBackgroundShapeStyle.windowBackground)
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .scrollEdgeEffectHidden(true, for: .top)
-        .background { WindowToolbarChrome() }
         .animation(.snappy(duration: 0.24), value: isSidebarCollapsed)
         .modifier(RootPresentations(isArchivePresented: $isArchivePresented))
         #else

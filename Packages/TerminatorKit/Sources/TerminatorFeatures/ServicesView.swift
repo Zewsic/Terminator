@@ -26,25 +26,39 @@ struct ServicesView: View {
                 )
             } else {
                 InspectorLayout {
-                    List(filteredServices, selection: $selectedServiceID) { service in
-                        HStack(spacing: 12) {
-                            Image(systemName: "point.3.connected.trianglepath.dotted")
-                                .foregroundStyle(isAvailable(service) ? .green : .secondary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack {
-                                    Text(service.name).fontWeight(.medium)
-                                    Text(service.state.uppercased())
-                                        .font(.caption2.bold())
-                                        .foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(filteredServices) { service in
+                                HStack(spacing: 12) {
+                                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                                        .foregroundStyle(isAvailable(service) ? .green : .secondary)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack {
+                                            Text(service.name).fontWeight(.medium)
+                                            Text(service.state.uppercased())
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(FeatureL10n.text(.containerSummary, service.image, service.endpointName))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
                                 }
-                                Text(FeatureL10n.text(.containerSummary, service.image, service.endpointName))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background {
+                                    if selectedServiceID == service.id {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.16))
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture { selectedServiceID = service.id }
                             }
-                            Spacer()
                         }
-                        .padding(.vertical, 4)
-                        .tag(service.id)
+                        .padding(.vertical, 8)
                     }
                 } inspector: {
                     if let service = model.containers.first(where: { $0.id == selectedServiceID }) {

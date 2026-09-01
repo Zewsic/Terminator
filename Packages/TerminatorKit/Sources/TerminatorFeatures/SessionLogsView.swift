@@ -21,29 +21,44 @@ struct SessionLogsView: View {
                 ContentUnavailableView(FeatureL10n.text(.sessionLogsNoSessionLogs), systemImage: "text.document", description: Text(FeatureL10n.text(.sessionLogsRemoteTerminalOutputWillBeEncryptedAnd)))
             } else {
                 InspectorLayout {
-                    List(filteredLogs, selection: $selectedLogID) { log in
-                    HStack(spacing: 12) {
-                        Image(systemName: log.isPinned ? "pin.fill" : "terminal")
-                        VStack(alignment: .leading) {
-                            Text(log.hostDisplayName).fontWeight(.medium)
-                            Text(FeatureL10n.text(
-                                .sessionlogSummary,
-                                log.terminal.displayName,
-                                log.startedAt.formatted(),
-                                ByteCountFormatter.string(fromByteCount: log.byteCount, countStyle: .file)
-                            ))
-                                .font(.caption).foregroundStyle(.secondary)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(filteredLogs) { log in
+                                HStack(spacing: 12) {
+                                    Image(systemName: log.isPinned ? "pin.fill" : "terminal")
+                                    VStack(alignment: .leading) {
+                                        Text(log.hostDisplayName).fontWeight(.medium)
+                                        Text(FeatureL10n.text(
+                                            .sessionlogSummary,
+                                            log.terminal.displayName,
+                                            log.startedAt.formatted(),
+                                            ByteCountFormatter.string(fromByteCount: log.byteCount, countStyle: .file)
+                                        ))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(log.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background {
+                                    if selectedLogID == log.id {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.16))
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture { selectedLogID = log.id }
+                                .contextMenu {
+                                    Button(FeatureL10n.text(log.isPinned ? .actionUnpin : .actionPin)) { Task { await model.setLogPinned(log.id, pinned: !log.isPinned) } }
+                                    Button(FeatureL10n.text(.sessionLogsExport)) { Task { await model.exportLog(log) } }.disabled(log.state == .active)
+                                    Button(FeatureL10n.text(.sessionLogsDelete), role: .destructive) { Task { await model.deleteLog(log) } }.disabled(log.state == .active)
+                                }
+                            }
                         }
-                        Spacer()
-                        Text(log.state.rawValue.capitalized).font(.caption).foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
                     }
-                    .contextMenu {
-                        Button(FeatureL10n.text(log.isPinned ? .actionUnpin : .actionPin)) { Task { await model.setLogPinned(log.id, pinned: !log.isPinned) } }
-                        Button(FeatureL10n.text(.sessionLogsExport)) { Task { await model.exportLog(log) } }.disabled(log.state == .active)
-                        Button(FeatureL10n.text(.sessionLogsDelete), role: .destructive) { Task { await model.deleteLog(log) } }.disabled(log.state == .active)
-                    }
-                    .tag(log.id)
-                }
                 } inspector: {
                     if let log = model.sessionLogs.first(where: { $0.id == selectedLogID }) {
                         SessionLogInspector(log: log) { selectedLogID = nil }

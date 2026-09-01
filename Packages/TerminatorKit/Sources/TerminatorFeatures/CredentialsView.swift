@@ -210,25 +210,52 @@ struct CredentialsView: View {
         } else if identities.isEmpty && available.isEmpty && !hasAvailableImports {
             ContentUnavailableView.search(text: searchText)
         } else {
-            List {
-                if !identities.isEmpty {
-                    Section {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    if !identities.isEmpty {
+                        sectionHeader(FeatureL10n.text(.credentialsIdentity), id: "identities")
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
                         if !collapsedCredentialGroups.contains("identities") {
-                            ForEach(identities) { identity in identityRow(identity) }
+                            ForEach(identities) { identity in
+                                identityRow(identity)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                            }
                         }
-                    } header: { sectionHeader(FeatureL10n.text(.credentialsIdentity), id: "identities") }
-                }
-                if !available.isEmpty {
-                    Section {
+                    }
+                    if !available.isEmpty {
+                        sectionHeader(FeatureL10n.text(.sectionCredentials), id: "credentials")
+                            .padding(.horizontal, 12)
+                            .padding(.top, 8)
                         if !collapsedCredentialGroups.contains("credentials") {
-                            ForEach(available) { credential in credentialRow(credential) }
+                            ForEach(available) { credential in
+                                credentialRow(credential)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                            }
                         }
-                    } header: { sectionHeader(FeatureL10n.text(.sectionCredentials), id: "credentials") }
-                }
-                if model.capabilities.externalFileAccess, hasAvailableImports {
-                    Section {
+                    }
+                    if model.capabilities.externalFileAccess, hasAvailableImports {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) { isImportGroupCollapsed.toggle() }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isImportGroupCollapsed ? "chevron.right" : "chevron.down")
+                                    .font(.caption.weight(.semibold))
+                                Text(FeatureL10n.text(.externalImportAvailable))
+                                Spacer(minLength: 0)
+                            }.contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
                         if !isImportGroupCollapsed {
-                            ForEach(model.availableImportSources) { source in importSourceRow(source) }
+                            ForEach(model.availableImportSources) { source in
+                                importSourceRow(source)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                            }
                             ForEach(openSSHKeys) { key in
                                 HStack {
                                     Image(systemName: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill")
@@ -244,29 +271,26 @@ struct CredentialsView: View {
                                             .labelStyle(.iconOnly)
                                     }
                                 }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                                 .help(key.importError ?? key.privateKeyURL.path)
                             }
                             ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
                                 ForEach(bundle.identities.filter(matchesSearch)) { identity in
                                     externalIdentityRow(identity, bundle: bundle)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
                                 }
                                 ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
                                     externalKeyRow(key, bundle: bundle)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
                                 }
                             }
                         }
-                    } header: {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.18)) { isImportGroupCollapsed.toggle() }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: isImportGroupCollapsed ? "chevron.right" : "chevron.down")
-                                    .font(.caption.weight(.semibold))
-                                Text(FeatureL10n.text(.externalImportAvailable))
-                            }.contentShape(Rectangle())
-                        }.buttonStyle(.plain)
                     }
                 }
+                .padding(.vertical, 8)
             }
             .accessibilityIdentifier("credentials-list")
         }

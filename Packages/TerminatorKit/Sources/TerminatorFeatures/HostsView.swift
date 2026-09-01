@@ -145,15 +145,9 @@ struct HostsView: View {
     }
 
     private var hostList: some View {
-        List(selection: $selectedHostID) {
-            ForEach(hostGroups) { group in
-                Section {
-                    if !collapsedHostGroups.contains(group.id) {
-                        ForEach(group.hosts) { host in
-                            hostRow(host)
-                        }
-                    }
-                } header: {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(hostGroups) { group in
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
                             if collapsedHostGroups.contains(group.id) {
@@ -167,17 +161,40 @@ struct HostsView: View {
                             Image(systemName: collapsedHostGroups.contains(group.id) ? "chevron.right" : "chevron.down")
                                 .font(.caption.weight(.semibold))
                             Text(group.title)
+                            Spacer(minLength: 0)
                         }
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
+                    if !collapsedHostGroups.contains(group.id) {
+                        ForEach(group.hosts) { host in
+                            hostRow(host)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background {
+                                    if selectedHostID == host.id {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.accentColor.opacity(0.16))
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture { selectedHostID = host.id }
+                        }
+                    }
                 }
-            }
-            if model.capabilities.externalFileAccess, hasAvailableImports {
-                Section {
+                if model.capabilities.externalFileAccess, hasAvailableImports {
+                    collapsibleHeader(FeatureL10n.text(.externalImportAvailable), collapsed: $isImportGroupCollapsed)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
                     if !isImportGroupCollapsed {
                         ForEach(model.availableImportSources) { source in
                             importSourceRow(source)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
                         }
                         ForEach(availableOpenSSHHosts) { host in
                             HStack {
@@ -191,6 +208,8 @@ struct HostsView: View {
                                 Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
                                     .labelStyle(.iconOnly)
                             }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
                             .contentShape(Rectangle())
                             .contextMenu {
                                 Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
@@ -199,13 +218,14 @@ struct HostsView: View {
                         ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
                             ForEach(bundle.hosts.filter(matchesSearch)) { host in
                                 externalHostRow(host, bundle: bundle)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
                             }
                         }
                     }
-                } header: {
-                    collapsibleHeader(FeatureL10n.text(.externalImportAvailable), collapsed: $isImportGroupCollapsed)
                 }
             }
+            .padding(.vertical, 8)
         }
         .frame(minWidth: 280, idealWidth: 360)
         .accessibilityIdentifier("hosts-list")
