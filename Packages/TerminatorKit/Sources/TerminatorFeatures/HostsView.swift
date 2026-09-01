@@ -4,7 +4,6 @@ import TerminatorCore
 struct HostsView: View {
     @Environment(TerminatorAppModel.self) private var model
     @State private var search = ""
-    @FocusState private var isSearchFocused: Bool
     @State private var selectedHostID: UUID?
     @State private var editorDraft: HostDraft?
     @State private var isImportingOpenSSHHost = false
@@ -23,11 +22,28 @@ struct HostsView: View {
     }
 
     private var filteredHosts: [HostProfile] {
-        guard !search.isEmpty else { return model.hosts }
-        return model.hosts.filter {
-            $0.displayName.localizedCaseInsensitiveContains(search)
-                || $0.hostname.localizedCaseInsensitiveContains(search)
-                || $0.tags.contains(where: { $0.localizedCaseInsensitiveContains(search) })
+        let terms = search.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !terms.isEmpty else { return model.hosts }
+
+        return model.hosts.filter { host in
+            var searchableValues = [
+                host.displayName,
+                host.hostname,
+                resolvedUsername(for: host),
+                host.group ?? "",
+                host.notes,
+            ]
+            searchableValues.append(contentsOf: host.tags)
+
+            if let identityID = host.authentication.identityID,
+               let identity = model.identities.first(where: { $0.id == identityID }) {
+                searchableValues.append(identity.name)
+                searchableValues.append(identity.username)
+            }
+
+            return terms.allSatisfy { term in
+                searchableValues.contains { $0.localizedCaseInsensitiveContains(term) }
+            }
         }
     }
 
@@ -87,10 +103,14 @@ struct HostsView: View {
             }
         }
         .navigationTitle(FeatureL10n.text(.overviewHosts))
-        .searchable(text: $search, placement: .toolbar, prompt: FeatureL10n.text(.hostsSearchHosts))
-        .searchFocused($isSearchFocused)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarSpacer(.flexible)
+            ToolbarItem {
+                ToolbarSearchField(text: $search, prompt: FeatureL10n.text(.hostsSearchHosts))
+            }
+            .sharedBackgroundVisibility(.hidden)
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
                 Button(FeatureL10n.text(.hostsAddHost), systemImage: "plus") { openEditor(HostDraft()) }
                     .accessibilityIdentifier("add-host")
             }
@@ -121,9 +141,6 @@ struct HostsView: View {
             } else {
                 editorDraft = nil
             }
-        }
-        .onChange(of: isSearchFocused) { _, isFocused in
-            if isFocused { closeInspector() }
         }
     }
 

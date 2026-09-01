@@ -5,7 +5,7 @@ import TerminatorCore
 @MainActor
 @Observable
 public final class TerminatorAppModel {
-    public var selection: AppSection = .overview
+    public var selection: AppSection = .hosts
     public internal(set) var hosts: [HostProfile] = []
     public internal(set) var credentials: [CredentialMetadata] = []
     public internal(set) var identities: [IdentityProfile] = []

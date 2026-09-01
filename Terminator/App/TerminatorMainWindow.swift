@@ -28,14 +28,12 @@ enum TerminatorMainWindow {
             defer: false
         )
         window.identifier = NSUserInterfaceItemIdentifier("main")
-        let toolbar = NSToolbar(identifier: "TerminatorMainToolbar")
-        toolbar.allowsUserCustomization = false
-        toolbar.displayMode = .iconOnly
-        window.toolbar = toolbar
+        window.title = "Terminator"
+        window.toolbar = nil
         window.toolbarStyle = .unified
-        window.titleVisibility = .visible
+        window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.titlebarSeparatorStyle = .automatic
+        window.titlebarSeparatorStyle = .none
         window.contentViewController = NSHostingController(rootView: root)
         window.center()
         window.setFrameAutosaveName("TerminatorMain")

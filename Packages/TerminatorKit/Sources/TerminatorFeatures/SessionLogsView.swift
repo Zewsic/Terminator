@@ -4,6 +4,16 @@ import TerminatorCore
 struct SessionLogsView: View {
     @Environment(TerminatorAppModel.self) private var model
     @State private var selectedLogID: UUID?
+    @State private var search = ""
+
+    private var filteredLogs: [SessionLogMetadata] {
+        guard !search.isEmpty else { return model.sessionLogs }
+        return model.sessionLogs.filter { log in
+            log.hostDisplayName.localizedCaseInsensitiveContains(search)
+                || log.terminal.displayName.localizedCaseInsensitiveContains(search)
+                || log.state.rawValue.localizedCaseInsensitiveContains(search)
+        }
+    }
 
     var body: some View {
         Group {
@@ -11,7 +21,7 @@ struct SessionLogsView: View {
                 ContentUnavailableView(FeatureL10n.text(.sessionLogsNoSessionLogs), systemImage: "text.document", description: Text(FeatureL10n.text(.sessionLogsRemoteTerminalOutputWillBeEncryptedAnd)))
             } else {
                 InspectorLayout {
-                    List(model.sessionLogs, selection: $selectedLogID) { log in
+                    List(filteredLogs, selection: $selectedLogID) { log in
                     HStack(spacing: 12) {
                         Image(systemName: log.isPinned ? "pin.fill" : "terminal")
                         VStack(alignment: .leading) {
@@ -43,16 +53,23 @@ struct SessionLogsView: View {
         }
         .navigationTitle(FeatureL10n.text(.sessionLogsLogs))
         .toolbar {
-            ToolbarItem(placement: .navigation) {
+            ToolbarSpacer(.flexible)
+            ToolbarItem {
                 Button(FeatureL10n.text(.featureHistoryCloseInspector), systemImage: "arrow.left.to.line") { selectedLogID = nil }
                     .labelStyle(.iconOnly)
                     .accessibilityLabel(FeatureL10n.text(.featureHistoryCloseInspector))
                     .disabled(selectedLogID == nil)
                     .opacity(selectedLogID == nil ? 0 : 1)
             }
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
                 Button(FeatureL10n.text(.sessionLogsRefresh), systemImage: "arrow.clockwise") { Task { await model.load() } }
             }
+            ToolbarSpacer(.fixed)
+            ToolbarItem {
+                ToolbarSearchField(text: $search, prompt: "Search logs")
+            }
+            .sharedBackgroundVisibility(.hidden)
         }
     }
 }

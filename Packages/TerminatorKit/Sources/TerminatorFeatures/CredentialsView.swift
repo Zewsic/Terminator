@@ -12,7 +12,6 @@ struct CredentialsView: View {
     @Environment(TerminatorAppModel.self) private var model
     @Binding private var isArchivePresented: Bool
     @State private var searchText = ""
-    @FocusState private var isSearchFocused: Bool
     @State private var accessKeyDraft: AccessKeyDraft?
     @State private var identityDraft: IdentityDraft?
     @State private var selectedCredential: CredentialMetadata?
@@ -91,8 +90,6 @@ struct CredentialsView: View {
             .animation(.easeInOut(duration: 0.22), value: inspectorSessionID))
         }, isInspectorPresented: hasInspector, onContentInteraction: { closeInspector() })
         .navigationTitle(FeatureL10n.text(.overviewCredentials))
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search identities and credentials")
-        .searchFocused($isSearchFocused)
         .toolbar {
             credentialsToolbar
         }
@@ -116,9 +113,6 @@ struct CredentialsView: View {
             Button(FeatureL10n.text(.historyCancel), role: .cancel) { pendingArchive = nil }
         } message: {
             Text(FeatureL10n.text(.credentialsItsKeychainMaterialRemainsAvailableUntilYou))
-        }
-        .onChange(of: isSearchFocused) { _, isFocused in
-            if isFocused { closeInspector() }
         }
         .confirmationDialog(FeatureL10n.text(.credentialsPurgeSecretTitle),
             isPresented: Binding(get: { pendingPurge != nil }, set: { if !$0 { pendingPurge = nil } }),
@@ -160,21 +154,19 @@ struct CredentialsView: View {
 
     @ToolbarContentBuilder
     private var credentialsToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            addMenu
+        ToolbarSpacer(.flexible)
+        ToolbarItem {
             Button(FeatureL10n.text(.actionArchive), systemImage: "archivebox") { isArchivePresented = true }
                 .accessibilityIdentifier("archive-button")
         }
-        if hasInspector && !isExplicitAccessKeyImport && pendingExternalIdentity == nil {
-            ToolbarItem(placement: .navigation) {
-                ControlGroup {
-                    Button(FeatureL10n.text(.actionCancel), systemImage: "xmark") { discardInspector() }
-                    Button(FeatureL10n.text(.featureHostEditorSaveAndClose), systemImage: "checkmark") {
-                        Task { await saveInspectorAndClose() }
-                    }
-                }
-                .labelStyle(.iconOnly)
-            }
+        ToolbarSpacer(.fixed)
+        ToolbarItem {
+            ToolbarSearchField(text: $searchText, prompt: "Search identities and credentials")
+        }
+        .sharedBackgroundVisibility(.hidden)
+        ToolbarSpacer(.fixed)
+        ToolbarItem {
+            addMenu
         }
     }
 
@@ -370,26 +362,6 @@ struct CredentialsView: View {
     private var isExplicitAccessKeyImport: Bool {
         isImportingOpenSSHKey
             || (accessKeyDraft?.credentialID == nil && accessKeyDraft?.mode == .importExisting)
-    }
-
-    private func discardInspector() {
-        isDiscardingInspector = true
-        closeInspector()
-    }
-
-    private func saveInspectorAndClose() async {
-        isDiscardingInspector = true
-        if let accessKeyDraft {
-            _ = await model.saveAccessKey(accessKeyDraft)
-        } else if let selectedCredential {
-            var draft = AccessKeyDraft()
-            draft.credentialID = selectedCredential.id
-            draft.label = selectedCredential.label
-            _ = await model.replaceAccessKey(draft)
-        } else if let identityDraft {
-            _ = await model.saveIdentity(identityDraft)
-        }
-        closeInspector()
     }
 
     private func openAccessKey(_ draft: AccessKeyDraft, importingFromOpenSSH: Bool = false) {
