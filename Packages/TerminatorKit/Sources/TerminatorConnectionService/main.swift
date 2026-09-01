@@ -7,11 +7,11 @@ import TerminatorSSH
 
 @main
 enum TerminatorConnectionServiceMain {
-    static func main() {
+    static func main() async {
         do {
             switch CommandLine.arguments.dropFirst().first {
             case "connect":
-                connectOnce()
+                await connectOnce()
                 return
             case "mcp":
                 TerminatorMCPServer.run()
@@ -19,34 +19,29 @@ enum TerminatorConnectionServiceMain {
             default:
                 break
             }
-            try run()
+            try await run()
         } catch {
             FileHandle.standardError.write(Data("terminator-service: \(error.localizedDescription)\n".utf8))
             Foundation.exit(1)
         }
-        RunLoop.main.run()
     }
 
-    private static func connectOnce() {
+    private static func connectOnce() async {
         guard let hostID = CommandLine.arguments.dropFirst(2).first.flatMap(UUID.init(uuidString:)) else {
             FileHandle.standardError.write(Data("terminator-service: usage: terminator-service connect <host-id>\n".utf8))
             Foundation.exit(1)
         }
         let terminal = CommandLine.arguments.dropFirst(3).first.flatMap(TerminalApplication.init(rawValue:)) ?? .terminal
-        Task {
-            do {
-                guard AccessPreferencesStore.load().cliEnabled else { throw ConnectionServiceError.cliDisabled }
-                try await ConnectionServiceClient().connect(hostID: hostID, terminal: terminal)
-                Foundation.exit(0)
-            } catch {
-                FileHandle.standardError.write(Data("terminator-service: \(error.localizedDescription)\n".utf8))
-                Foundation.exit(1)
-            }
+        do {
+            guard AccessPreferencesStore.load().cliEnabled else { throw ConnectionServiceError.cliDisabled }
+            try await ConnectionServiceClient().connect(hostID: hostID, terminal: terminal)
+        } catch {
+            FileHandle.standardError.write(Data("terminator-service: \(error.localizedDescription)\n".utf8))
+            Foundation.exit(1)
         }
-        RunLoop.main.run()
     }
 
-    private static func run() throws {
+    private static func run() async throws {
         let container = try TerminatorSchema.makeContainer()
         let store = TerminatorStore(modelContainer: container)
         let secretStore = KeychainSecretStore(service: "pro.zewsic.terminator.secrets")
@@ -74,10 +69,9 @@ enum TerminatorConnectionServiceMain {
             prompting: prompting,
             terminalLauncher: launcher
         )
-        Task {
-            await prompting.attach(runtime)
-            try await runtime.start()
-        }
+        await prompting.attach(runtime)
+        try await runtime.start()
+        try await runtime.waitUntilStopped()
     }
 }
 #else

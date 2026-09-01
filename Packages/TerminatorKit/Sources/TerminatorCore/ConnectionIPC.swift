@@ -140,6 +140,10 @@ public enum ConnectionServicePaths: Sendable {
         applicationSupport.appending(path: "control.sock")
     }
 
+    public static var serviceLockURL: URL {
+        applicationSupport.appending(path: "connection-service.lock")
+    }
+
     public static var attachDirectoryURL: URL {
         applicationSupport.appending(path: "Attach", directoryHint: .isDirectory)
     }

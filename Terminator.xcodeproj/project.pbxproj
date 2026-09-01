@@ -229,7 +229,7 @@
 				"cp \"$SRCROOT/Packages/TerminatorKit/.build/$helper_configuration/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"",
 				"cp \"$SRCROOT/Packages/TerminatorKit/.build/$helper_configuration/terminator-service\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
 				"chmod 755 \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
-				"if [[ -n \"$EXPANDED_CODE_SIGN_IDENTITY\" && \"$EXPANDED_CODE_SIGN_IDENTITY\" != \"-\" && -n \"$CODE_SIGN_ENTITLEMENTS\" ]]; then",
+				"if [[ \"${CODE_SIGNING_ALLOWED:-YES}\" != \"NO\" && -n \"$EXPANDED_CODE_SIGN_IDENTITY\" && -n \"$CODE_SIGN_ENTITLEMENTS\" ]]; then",
 				"  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier pro.zewsic.terminator --options runtime --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
 				"fi",
 				"mkdir -p \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents\"",
@@ -443,8 +443,10 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C00000000000000000000002 /* Direct.xcconfig */;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9B6D5X7HLQ;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -480,8 +482,10 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C00000000000000000000002 /* Direct.xcconfig */;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9B6D5X7HLQ;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
@@ -517,8 +521,10 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C00000000000000000000003 /* AppStore.xcconfig */;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9B6D5X7HLQ;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				EXCLUDED_SOURCE_FILE_NAMES = TermiusDecrypt.js;
@@ -538,8 +544,10 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = C00000000000000000000003 /* AppStore.xcconfig */;
 			buildSettings = {
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9B6D5X7HLQ;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_PREVIEWS = YES;
 				EXCLUDED_SOURCE_FILE_NAMES = TermiusDecrypt.js;

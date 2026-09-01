@@ -12,6 +12,7 @@ public actor ConnectionServiceRuntime {
     private let terminalLauncher: any ConnectionTerminalLaunching
     private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     private var server: Channel?
+    private var serviceLockFD: Int32 = -1
     private var clients: [ObjectIdentifier: ControlClient] = [:]
     private var promptWaiters: [UUID: CheckedContinuation<ConnectionPromptReply, any Error>] = [:]
     private var publishing: Set<UUID> = []
@@ -31,7 +32,13 @@ public actor ConnectionServiceRuntime {
         self.terminalLauncher = terminalLauncher
     }
 
-    deinit { try? group.syncShutdownGracefully() }
+    deinit {
+        if serviceLockFD >= 0 {
+            _ = Darwin.lockf(serviceLockFD, F_ULOCK, 0)
+            Darwin.close(serviceLockFD)
+        }
+        try? group.syncShutdownGracefully()
+    }
 
     public func start() async throws {
         try FileManager.default.createDirectory(
@@ -40,6 +47,7 @@ public actor ConnectionServiceRuntime {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o700], ofItemAtPath: ConnectionServicePaths.applicationSupport.path
         )
+        try acquireServiceLock()
         let socketURL = ConnectionServicePaths.controlSocketURL
         try? FileManager.default.removeItem(at: socketURL)
         let bootstrap = ServerBootstrap(group: group)
@@ -52,6 +60,22 @@ public actor ConnectionServiceRuntime {
             }
         server = try await bootstrap.bind(unixDomainSocketPath: socketURL.path).get()
         _ = Darwin.chmod(socketURL.path, 0o600)
+    }
+
+    public func waitUntilStopped() async throws {
+        guard let server else { throw ConnectionServiceError.unavailable }
+        try await server.closeFuture.get()
+    }
+
+    private func acquireServiceLock() throws {
+        guard serviceLockFD < 0 else { return }
+        let fd = Darwin.open(ConnectionServicePaths.serviceLockURL.path, O_CREAT | O_RDWR, 0o600)
+        guard fd >= 0 else { throw ConnectionServiceError.unavailable }
+        guard Darwin.lockf(fd, F_TLOCK, 0) == 0 else {
+            Darwin.close(fd)
+            throw ConnectionServiceError.unavailable
+        }
+        serviceLockFD = fd
     }
 
     fileprivate func register(_ channel: Channel) {
@@ -147,7 +171,7 @@ public actor ConnectionServiceRuntime {
             broadcast(.prompt(envelope))
             Task {
                 try? await Task.sleep(for: .seconds(300))
-                if let waiter = await self.takeWaiter(envelope.id) {
+                if let waiter = self.takeWaiter(envelope.id) {
                     waiter.resume(throwing: ConnectionServiceError.promptTimedOut)
                 }
             }

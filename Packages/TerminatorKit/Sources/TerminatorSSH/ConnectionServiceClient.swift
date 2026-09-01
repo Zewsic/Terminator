@@ -9,6 +9,9 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
     private var pending: [UUID: CheckedContinuation<ConnectionControlResponse, any Error>] = [:]
     private var phaseContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
     private var promptHandler: (@Sendable (ConnectionPromptEnvelope) async -> ConnectionPromptReply)?
+    private var isConnecting = false
+    private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
+    private var reconnectTask: Task<Void, Never>?
 
     public init() {}
 
@@ -52,7 +55,7 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
         let observerID = UUID()
         return AsyncStream { continuation in
             Task {
-                await self.addPhaseObserver(observerID, hostID: hostID, continuation: continuation)
+                self.addPhaseObserver(observerID, hostID: hostID, continuation: continuation)
                 continuation.yield(await self.state(for: hostID))
             }
             continuation.onTermination = { [weak self] _ in
@@ -110,6 +113,10 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
 
     public func ensureConnected() async throws {
         if channel?.isActive == true { return }
+        if isConnecting {
+            return try await withCheckedThrowingContinuation { connectionWaiters.append($0) }
+        }
+        isConnecting = true
         let socketURL = ConnectionServicePaths.controlSocketURL
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { [weak self] channel in
@@ -119,11 +126,17 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
                 return channel.pipeline.addHandler(ControlClientHandler(client: self))
             }
         do {
-            channel = try await bootstrap.connect(unixDomainSocketPath: socketURL.path).get()
+            let connected = try await bootstrap.connect(unixDomainSocketPath: socketURL.path).get()
+            channel = connected
+            let response = try await send(.subscribe, over: connected)
+            guard case .ok = response else { throw ConnectionServiceError.unavailable }
+            finishConnecting(with: .success(()))
         } catch {
+            channel = nil
+            finishConnecting(with: .failure(ConnectionServiceError.unavailable))
+            scheduleReconnectIfNeeded()
             throw ConnectionServiceError.unavailable
         }
-        _ = try await request(.subscribe)
     }
 
     fileprivate func receive(_ frame: ConnectionControlFrame) {
@@ -141,11 +154,16 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
         }
     }
 
-    fileprivate func connectionDropped() {
+    fileprivate func connectionDropped(_ droppedChannel: Channel) {
+        guard channel.map(ObjectIdentifier.init) == ObjectIdentifier(droppedChannel) else { return }
         channel = nil
         let error = ConnectionServiceError.unavailable
         for continuation in pending.values { continuation.resume(throwing: error) }
         pending.removeAll()
+        for observers in phaseContinuations.values {
+            for continuation in observers.values { continuation.yield(.disconnected) }
+        }
+        scheduleReconnectIfNeeded()
     }
 
     private func answer(_ envelope: ConnectionPromptEnvelope) async {
@@ -156,6 +174,13 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
     private func request(_ request: ConnectionControlRequest) async throws -> ConnectionControlResponse {
         try await ensureConnected()
         guard let channel else { throw ConnectionServiceError.unavailable }
+        return try await send(request, over: channel)
+    }
+
+    private func send(
+        _ request: ConnectionControlRequest,
+        over channel: Channel
+    ) async throws -> ConnectionControlResponse {
         let id = UUID()
         return try await withCheckedThrowingContinuation { continuation in
             pending[id] = continuation
@@ -164,12 +189,74 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
                 continuation.resume(throwing: ConnectionServiceError.unavailable)
                 return
             }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(15))
+                await self?.timeoutRequest(id)
+            }
+            let requestOwner = self
             channel.eventLoop.execute {
                 var buffer = channel.allocator.buffer(capacity: data.count)
                 buffer.writeBytes(data)
-                channel.writeAndFlush(buffer, promise: nil)
+                let promise = channel.eventLoop.makePromise(of: Void.self)
+                promise.futureResult.whenFailure { _ in
+                    Task { await requestOwner.failRequest(id) }
+                }
+                channel.writeAndFlush(buffer, promise: promise)
             }
         }
+    }
+
+    private func timeoutRequest(_ id: UUID) {
+        pending.removeValue(forKey: id)?.resume(throwing: ConnectionServiceError.unavailable)
+    }
+
+    private func failRequest(_ id: UUID) {
+        pending.removeValue(forKey: id)?.resume(throwing: ConnectionServiceError.unavailable)
+    }
+
+    private func finishConnecting(with result: Result<Void, any Error>) {
+        isConnecting = false
+        let waiters = connectionWaiters
+        connectionWaiters.removeAll()
+        for waiter in waiters {
+            switch result {
+            case .success: waiter.resume()
+            case .failure(let error): waiter.resume(throwing: error)
+            }
+        }
+    }
+
+    private func scheduleReconnectIfNeeded() {
+        guard !phaseContinuations.isEmpty, reconnectTask == nil else { return }
+        reconnectTask = Task { [weak self] in
+            var delay = Duration.milliseconds(250)
+            while !Task.isCancelled {
+                guard let self else { return }
+                do {
+                    try await self.ensureConnected()
+                    await self.resynchronizeObservedHosts()
+                    await self.finishReconnect()
+                    return
+                } catch {
+                    try? await Task.sleep(for: delay)
+                    delay = min(delay * 2, .seconds(5))
+                }
+            }
+        }
+    }
+
+    private func resynchronizeObservedHosts() async {
+        for hostID in phaseContinuations.keys {
+            guard let response = try? await request(.state(hostID: hostID)),
+                  case .phase(let phase) = response else { continue }
+            for continuation in phaseContinuations[hostID]?.values ?? [:].values {
+                continuation.yield(phase)
+            }
+        }
+    }
+
+    private func finishReconnect() {
+        reconnectTask = nil
     }
 
     private func addPhaseObserver(
@@ -178,12 +265,17 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
         continuation: AsyncStream<SSHConnectionPhase>.Continuation
     ) {
         phaseContinuations[hostID, default: [:]][observerID] = continuation
+        scheduleReconnectIfNeeded()
     }
 
     private func removePhaseObserver(_ observerID: UUID, hostID: UUID) {
         phaseContinuations[hostID]?[observerID] = nil
         if phaseContinuations[hostID]?.isEmpty == true {
             phaseContinuations[hostID] = nil
+        }
+        if phaseContinuations.isEmpty {
+            reconnectTask?.cancel()
+            reconnectTask = nil
         }
     }
 }
@@ -205,8 +297,13 @@ private final class ControlClientHandler: ChannelInboundHandler, @unchecked Send
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        Task { await client.connectionDropped() }
+        let channel = context.channel
+        Task { await client.connectionDropped(channel) }
         context.fireChannelInactive()
+    }
+
+    func errorCaught(context: ChannelHandlerContext, error: any Error) {
+        context.close(promise: nil)
     }
 
     private func readLine() -> Data? {

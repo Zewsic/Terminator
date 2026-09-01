@@ -65,6 +65,12 @@ cd Packages/TerminatorKit
 swift test
 ```
 
+The Direct app and its bundled `terminator-service` both access the same macOS
+Keychain items. Use one stable Apple Development or Developer ID identity for
+the app and helper during interactive development. Ad-hoc signatures identify
+each rebuilt executable by a new code hash, so macOS can legitimately ask for
+Keychain access again after either binary changes.
+
 ## Architecture
 
 The macOS app target is a thin composition root. Reusable code lives in a local Swift package that already declares macOS 26 and iOS 26 support.

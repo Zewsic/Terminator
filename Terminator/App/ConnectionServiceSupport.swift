@@ -23,37 +23,78 @@ enum MCPAccessSupport {
 }
 
 enum ConnectionServiceSupport {
-    static let agent = SMAppService.agent(plistName: "pro.zewsic.terminator.connection.plist")
-
     static func bootstrap() {
-        Task.detached {
-            await ensureRunning()
-        }
+        Task { await ConnectionServiceSupervisor.shared.startMonitoring() }
     }
 
     static func ensureRunning() async {
-        if isControlSocketLive() { return }
-        try? FileManager.default.removeItem(at: ConnectionServicePaths.controlSocketURL)
-        do {
-            if agent.status == .enabled {
-                try await agent.unregister()
+        await ConnectionServiceSupervisor.shared.ensureRunning()
+    }
+}
+
+private actor ConnectionServiceSupervisor {
+    static let shared = ConnectionServiceSupervisor()
+
+    private let agent = SMAppService.agent(plistName: "pro.zewsic.terminator.connection.plist")
+    private var recoveryTask: Task<Void, Never>?
+    private var monitorTask: Task<Void, Never>?
+    private var lastRegistrationRepair = Date.distantPast
+
+    func startMonitoring() {
+        guard monitorTask == nil else { return }
+        monitorTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.ensureRunning()
+                try? await Task.sleep(for: .seconds(2))
             }
-            try agent.register()
-        } catch {
-            spawnFallback()
-        }
-        for _ in 0..<30 {
-            if isControlSocketLive() { return }
-            try? await Task.sleep(for: .milliseconds(100))
-        }
-        spawnFallback()
-        for _ in 0..<20 {
-            if isControlSocketLive() { return }
-            try? await Task.sleep(for: .milliseconds(100))
         }
     }
 
-    private static func isControlSocketLive() -> Bool {
+    func ensureRunning() async {
+        if isControlSocketLive() { return }
+        if let recoveryTask {
+            await recoveryTask.value
+            return
+        }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.recoverService()
+        }
+        recoveryTask = task
+        await task.value
+        recoveryTask = nil
+    }
+
+    private func recoverService() async {
+        if agent.status == .enabled {
+            if await waitForService(attempts: 10) { return }
+        }
+
+        let canRepairRegistration = Date.now.timeIntervalSince(lastRegistrationRepair) >= 30
+        if agent.status != .enabled || canRepairRegistration {
+            lastRegistrationRepair = .now
+            do {
+                if agent.status == .enabled { try await agent.unregister() }
+                try agent.register()
+            } catch {
+                spawnFallback()
+            }
+        }
+
+        if await waitForService(attempts: 30) { return }
+        spawnFallback()
+        _ = await waitForService(attempts: 20)
+    }
+
+    private func waitForService(attempts: Int) async -> Bool {
+        for _ in 0..<attempts {
+            if isControlSocketLive() { return true }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+
+    private func isControlSocketLive() -> Bool {
         let path = ConnectionServicePaths.controlSocketURL.path
         guard FileManager.default.fileExists(atPath: path) else { return false }
         let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
@@ -74,7 +115,7 @@ enum ConnectionServiceSupport {
         return connected == 0
     }
 
-    private static func spawnFallback() {
+    private func spawnFallback() {
         let bundled = Bundle.main.bundleURL.appending(path: "Contents/Helpers/terminator-service")
         guard FileManager.default.isExecutableFile(atPath: bundled.path) else { return }
         let process = Process()
