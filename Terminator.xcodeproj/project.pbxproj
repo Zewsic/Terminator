@@ -231,6 +231,7 @@
 				"chmod 755 \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
 				"if [[ \"${CODE_SIGNING_ALLOWED:-YES}\" != \"NO\" && -n \"$EXPANDED_CODE_SIGN_IDENTITY\" && -n \"$CODE_SIGN_ENTITLEMENTS\" ]]; then",
 				"  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier pro.zewsic.terminator --options runtime --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-service\"",
+				"  /usr/bin/codesign --force --sign \"$EXPANDED_CODE_SIGN_IDENTITY\" --identifier pro.zewsic.terminator --options runtime --entitlements \"$SRCROOT/$CODE_SIGN_ENTITLEMENTS\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Helpers/terminator-attach\"",
 				"fi",
 				"mkdir -p \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents\"",
 				"cp \"$SRCROOT/Support/LaunchAgents/pro.zewsic.terminator.connection.plist\" \"$TARGET_BUILD_DIR/$CONTENTS_FOLDER_PATH/Library/LaunchAgents/pro.zewsic.terminator.connection.plist\"",

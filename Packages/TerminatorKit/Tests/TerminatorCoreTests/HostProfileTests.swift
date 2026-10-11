@@ -45,6 +45,17 @@ struct HostProfileTests {
         #expect(decoded.sessionPersistence == .tmux)
         #expect(decoded.remoteShell.preset == .loginShell)
         #expect(decoded.connectCommands == "cd /opt\nsource ./env")
+        #expect(decoded.detectedOS == nil)
+
+        let withOS = HostProfile(
+            displayName: "Lab",
+            hostname: "lab.example.com",
+            authentication: .manual(username: "root", authenticationMethods: []),
+            detectedOS: DetectedHostOS(id: "ubuntu", name: "Ubuntu", version: "24.04")
+        )
+        let encodedOS = try JSONEncoder().encode(withOS)
+        let decodedOS = try JSONDecoder().decode(HostProfile.self, from: encodedOS)
+        #expect(decodedOS.detectedOS?.tag == "Ubuntu 24.04")
 
         struct Legacy: Encodable {
             var id = UUID()

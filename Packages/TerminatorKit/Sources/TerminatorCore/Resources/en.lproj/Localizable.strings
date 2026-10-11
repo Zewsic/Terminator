@@ -74,6 +74,17 @@
 "history.entity.host" = "Host";
 "history.entity.credential" = "Credential";
 "history.entity.identity" = "Identity";
+"history.entity.tunnel" = "Tunnel";
+"tunnel.kind.local" = "Local";
+"tunnel.kind.remote" = "Remote";
+"tunnel.kind.dynamic" = "Dynamic";
+"tunnel.endpoint.thisMac" = "This Mac";
+"error.tunnel.missingDisplayName" = "A display name is required.";
+"error.tunnel.invalidPort" = "The port must be between 1 and 65535.";
+"error.tunnel.destinationIsLocal" = "Host B cannot be this Mac.";
+"error.tunnel.missingHostname" = "A hostname is required.";
+"error.tunnel.dynamicRequiresThisMac" = "A dynamic tunnel listens on this Mac.";
+"error.store.tunnelNotFound" = "The tunnel no longer exists.";
 "history.operation.created" = "created";
 "history.operation.updated" = "updated";
 "history.operation.deleted" = "deleted";

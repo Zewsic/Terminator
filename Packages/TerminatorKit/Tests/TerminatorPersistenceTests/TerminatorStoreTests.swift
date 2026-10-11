@@ -6,6 +6,30 @@ import TerminatorCore
 
 @Suite("Persistent catalog", .serialized)
 struct TerminatorStoreTests {
+    @Test("Tunnel save and reload keeps both endpoints")
+    func tunnelRoundTrip() async throws {
+        let container = try TerminatorSchema.makeContainer(inMemory: true)
+        let store = TerminatorStore(modelContainer: container)
+        let host = HostProfile(displayName: "Edge", hostname: "edge.example", username: "root")
+        try await store.saveHost(host)
+        let tunnel = TunnelProfile(
+            displayName: "Database",
+            source: .thisMac,
+            destination: .saved(host.id),
+            listenPort: 5432,
+            targetAddress: "10.0.0.8",
+            targetPort: 5432
+        )
+        try await store.saveTunnel(tunnel)
+        let loaded = try #require(try await store.tunnel(id: tunnel.id))
+        #expect(loaded.destination == .saved(host.id))
+        #expect(loaded.listenPort == 5432)
+        #expect(loaded.targetAddress == "10.0.0.8")
+        let history = try await store.listHistory(entity: .tunnel)
+        #expect(history.count == 1)
+        #expect(history.first?.operation == .created)
+    }
+
     @Test("Host mutations append immutable history and can be reverted")
     func hostHistoryAndRevert() async throws {
         let container = try TerminatorSchema.makeContainer(inMemory: true)
@@ -29,6 +53,64 @@ struct TerminatorStoreTests {
         let historyAfterRevert = try await store.listHistory(entity: .host)
         #expect(historyAfterRevert.count == 3)
         #expect(historyAfterRevert.first?.operation == .restored)
+    }
+
+    @Test("Reverting identity metadata keeps the current password secret")
+    func identityHistoryKeepsCurrentPassword() async throws {
+        let container = try TerminatorSchema.makeContainer(inMemory: true)
+        let store = TerminatorStore(modelContainer: container)
+        let oldSecret = SecretID()
+        let newSecret = SecretID()
+        var identity = IdentityProfile(
+            name: "Production",
+            username: "deploy",
+            authenticationMethods: [.password(secretID: oldSecret)]
+        )
+        try await store.saveIdentity(identity)
+
+        identity.name = "Production renamed"
+        try await store.saveIdentity(identity)
+        let rename = try #require(try await store.listHistory(entity: .identity).first)
+
+        identity.authenticationMethods = [.password(secretID: newSecret)]
+        try await store.saveIdentity(identity)
+        try await store.revert(historyEntryID: rename.id)
+
+        let restored = try #require(try await store.identity(id: identity.id))
+        #expect(restored.name == "Production")
+        #expect(restored.authenticationMethods == [.password(secretID: newSecret)])
+    }
+
+    @Test("Reverting host metadata keeps the current password secret")
+    func hostHistoryKeepsCurrentPassword() async throws {
+        let container = try TerminatorSchema.makeContainer(inMemory: true)
+        let store = TerminatorStore(modelContainer: container)
+        let oldSecret = SecretID()
+        let newSecret = SecretID()
+        var host = HostProfile(
+            displayName: "Production",
+            hostname: "prod.example.com",
+            authentication: .manual(
+                username: "deploy",
+                authenticationMethods: [.password(secretID: oldSecret)]
+            )
+        )
+        try await store.saveHost(host)
+
+        host.displayName = "Production renamed"
+        try await store.saveHost(host)
+        let rename = try #require(try await store.listHistory(entity: .host).first)
+
+        host.authentication = .manual(
+            username: "deploy",
+            authenticationMethods: [.password(secretID: newSecret)]
+        )
+        try await store.saveHost(host)
+        try await store.revert(historyEntryID: rename.id)
+
+        let restored = try #require(try await store.host(id: host.id))
+        #expect(restored.displayName == "Production")
+        #expect(restored.authentication.authenticationMethods == [.password(secretID: newSecret)])
     }
 
     @Test("Archiving a host retains its credential reference")
@@ -272,6 +354,34 @@ struct TerminatorStoreTests {
         let schema = Schema(TerminatorSchema.currentModels)
         let container = try ModelContainer(
             for: schema,
+            configurations: [ModelConfiguration("Terminator", schema: schema, url: copy, allowsSave: true)]
+        )
+        let store = TerminatorStore(modelContainer: container)
+        _ = try await store.listHosts(includeDeleted: true)
+    }
+
+    @Test("V6 schema migrates the existing application store")
+    func versionSixMigratesCopiedApplicationStore() async throws {
+        let original = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appending(path: "Terminator.store")
+        guard FileManager.default.fileExists(atPath: original.path) else { return }
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "TerminatorV6UserStore-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let copy = directory.appending(path: "Terminator.store")
+        try FileManager.default.copyItem(at: original, to: copy)
+        for suffix in ["-wal", "-shm"] {
+            let extra = URL(fileURLWithPath: original.path + suffix)
+            if FileManager.default.fileExists(atPath: extra.path) {
+                try FileManager.default.copyItem(at: extra, to: URL(fileURLWithPath: copy.path + suffix))
+            }
+        }
+
+        let schema = Schema(versionedSchema: TerminatorSchemaV6.self)
+        let container = try ModelContainer(
+            for: schema,
+            migrationPlan: TerminatorMigrationPlan.self,
             configurations: [ModelConfiguration("Terminator", schema: schema, url: copy, allowsSave: true)]
         )
         let store = TerminatorStore(modelContainer: container)

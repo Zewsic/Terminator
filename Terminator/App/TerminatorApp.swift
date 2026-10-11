@@ -38,7 +38,8 @@ struct TerminatorApp: App {
                     accessKeyService: accessKeyService,
                     userPresenceAuthorizer: LocalAuthenticationAuthorizer(),
                     dockerService: DemoDockerService(),
-                    sessionLogRepository: store
+                    sessionLogRepository: store,
+                    tunnelRepository: store
                 )
             )
             #else
@@ -70,7 +71,9 @@ struct TerminatorApp: App {
                 sessionLogExporter: logExporter,
                 knownHostRepository: store,
                 openSSHService: openSSHService,
-                externalImportService: externalImportService
+                externalImportService: externalImportService,
+                tunnelRepository: store,
+                tunnelController: connectionClient
             )
             connectionPrompts.onPrompt = {
                 appModel.revealBackgroundConnectionIfNeeded()

@@ -7,6 +7,8 @@ import TerminatorCore
 public final class TerminatorAppModel {
     public var selection: AppSection = .hosts
     public internal(set) var hosts: [HostProfile] = []
+    public internal(set) var tunnels: [TunnelProfile] = []
+    public internal(set) var tunnelPhases: [UUID: SSHConnectionPhase] = [:]
     public internal(set) var credentials: [CredentialMetadata] = []
     public internal(set) var identities: [IdentityProfile] = []
     public internal(set) var history: [HistoryEntry] = []
@@ -50,7 +52,10 @@ public final class TerminatorAppModel {
     let knownHostRepository: (any KnownHostRepository)?
     let openSSHService: (any OpenSSHIntegrationService)?
     let externalImportService: (any ExternalImportService)?
+    let tunnelRepository: (any TunnelRepository)?
+    let tunnelController: (any SSHTunnelControlling)?
     var connectionMonitors: [UUID: Task<Void, Never>] = [:]
+    var tunnelMonitor: Task<Void, Never>?
 
     public init(
         capabilities: AppCapabilities,
@@ -74,6 +79,16 @@ public final class TerminatorAppModel {
         self.knownHostRepository = dependencies.knownHostRepository
         self.openSSHService = dependencies.openSSHService
         self.externalImportService = dependencies.externalImportService
+        self.tunnelRepository = dependencies.tunnelRepository
+        self.tunnelController = dependencies.tunnelController
+        if dependencies.tunnelController != nil {
+            tunnelMonitor = Task { [weak self] in
+                guard let phases = await self?.tunnelController?.tunnelPhases() else { return }
+                for await event in phases {
+                    self?.tunnelPhases[event.id] = event.phase
+                }
+            }
+        }
     }
 
     public convenience init(
@@ -93,7 +108,9 @@ public final class TerminatorAppModel {
         sessionLogExporter: (any SessionLogExporting)? = nil,
         knownHostRepository: (any KnownHostRepository)? = nil,
         openSSHService: (any OpenSSHIntegrationService)? = nil,
-        externalImportService: (any ExternalImportService)? = nil
+        externalImportService: (any ExternalImportService)? = nil,
+        tunnelRepository: (any TunnelRepository)? = nil,
+        tunnelController: (any SSHTunnelControlling)? = nil
     ) {
         self.init(
             capabilities: capabilities,
@@ -112,7 +129,9 @@ public final class TerminatorAppModel {
                 sessionLogExporter: sessionLogExporter,
                 knownHostRepository: knownHostRepository,
                 openSSHService: openSSHService,
-                externalImportService: externalImportService
+                externalImportService: externalImportService,
+                tunnelRepository: tunnelRepository,
+                tunnelController: tunnelController
             ),
             connectionPrompts: connectionPrompts
         )
@@ -129,20 +148,46 @@ public final class TerminatorAppModel {
         isLoading = true
         defer { isLoading = false }
         do {
-            hosts = try await hostRepository.listHosts(includeDeleted: false)
-            onHostCatalogChanged?(hosts)
-            credentials = try await credentialRepository.listCredentials(includeDeleted: true)
-            identities = try await identityRepository.listIdentities(includeDeleted: true)
-            history = try await historyRepository.listHistory(entity: nil)
-            containers = try await dockerService.listContainers()
-            if let sessionLogRepository { sessionLogs = try await sessionLogRepository.listSessionLogs() }
-            if capabilities.externalTerminal, let externalTerminalService {
-                terminalApplications = await externalTerminalService.installedApplications()
-            }
-            if capabilities.externalFileAccess { await refreshImportSources() }
+            try await loadCatalog()
         } catch {
+            if Self.isTransientStoreError(error) {
+                try? await Task.sleep(for: .milliseconds(250))
+                do {
+                    try await loadCatalog()
+                    return
+                } catch {
+                    present(error)
+                    return
+                }
+            }
             present(error)
         }
+    }
+
+    private func loadCatalog() async throws {
+        hosts = try await hostRepository.listHosts(includeDeleted: false)
+        if let tunnelRepository { tunnels = try await tunnelRepository.listTunnels(includeDeleted: false) }
+        onHostCatalogChanged?(hosts)
+        credentials = try await credentialRepository.listCredentials(includeDeleted: true)
+        identities = try await identityRepository.listIdentities(includeDeleted: true)
+        history = try await historyRepository.listHistory(entity: nil)
+        containers = try await dockerService.listContainers()
+        if let sessionLogRepository { sessionLogs = try await sessionLogRepository.listSessionLogs() }
+        if capabilities.externalTerminal, let externalTerminalService {
+            terminalApplications = await externalTerminalService.installedApplications()
+        }
+        if capabilities.externalFileAccess { await refreshImportSources() }
+    }
+
+    private static func isTransientStoreError(_ error: Error) -> Bool {
+        let ns = error as NSError
+        if ns.domain == "NSSQLiteErrorDomain" && [5, 6, 14].contains(ns.code) { return true }
+        if ns.domain == NSCocoaErrorDomain && [4, 256, 257, 260].contains(ns.code) { return true }
+        let message = ns.localizedDescription.lowercased()
+        return message.contains("couldn't be opened")
+            || message.contains("couldn’t be opened")
+            || message.contains("busy")
+            || message.contains("locked")
     }
 
     func present(_ error: any Error) {

@@ -1,20 +1,15 @@
 import SwiftUI
 import TerminatorCore
-import UniformTypeIdentifiers
-
-#if os(macOS)
-import AppKit
-#elseif canImport(UIKit)
-import UIKit
-#endif
 
 struct IdentityEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(TerminatorAppModel.self) private var model
     @State private var draft: IdentityDraft
+    @State private var originalDraft: IdentityDraft
     @State private var hasTriggeredSave = false
     @State private var revealPassword = false
     @State private var isLoadingStoredPassword: Bool
+    @State private var isAuthorizationExpanded = true
     let onSave: @MainActor (IdentityDraft) async -> Void
     let inline: Bool
     let explicitImport: Bool
@@ -32,6 +27,7 @@ struct IdentityEditor: View {
         onClose: (() -> Void)? = nil
     ) {
         _draft = State(initialValue: draft)
+        _originalDraft = State(initialValue: draft)
         _isLoadingStoredPassword = State(initialValue: draft.authenticationMethods.contains { method in
             if case .password(let id) = method.kind { return id != nil }
             return false
@@ -45,93 +41,91 @@ struct IdentityEditor: View {
     }
 
     var body: some View {
-        editorShell(
-            title: explicitImport ? FeatureL10n.text(.externalImportIdentityAction) : (draft.id == nil ? "Add Identity" : "Edit Identity"),
-            width: inline ? nil : 560,
-            height: inline ? nil : 600,
-            saveTitle: explicitImport ? FeatureL10n.text(.externalImportIdentityAction) : "Save",
-            autoSave: inline && !explicitImport,
-            trailingActions: explicitImport
-        ) {
-            Form {
-                Section {
+        InspectorScreen(title: FeatureL10n.text(draft.id == nil ? .identityEditorAdd : .identityEditorEdit)) {
+            InspectorFieldGroup {
+                InspectorFieldRow(FeatureL10n.text(.uiField6)) {
                     TextField(FeatureL10n.text(.uiField6), text: $draft.name)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
                 }
-                Section(FeatureL10n.text(.hostAuthentication)) {
-                    TextField(FeatureL10n.text(.hostUsername), text: $draft.username)
+            }
+
+            InspectorCollapsibleSection(
+                FeatureL10n.text(.identityEditorAuthorization),
+                isExpanded: $isAuthorizationExpanded
+            ) {
+                InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.hostUsername)) {
+                        TextField(FeatureL10n.text(.hostUsername), text: $draft.username)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                    }
+
                     if let index = passwordIndex {
-                        HStack {
-                            Group {
-                                if revealPassword {
-                                    TextField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
-                                } else {
-                                    SecureField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
+                        InspectorGroupDivider()
+                        InspectorFieldRow(FeatureL10n.text(.passwordField)) {
+                            HStack(spacing: 8) {
+                                Group {
+                                    if revealPassword {
+                                        TextField(
+                                            FeatureL10n.text(.passwordField),
+                                            text: passwordBinding(at: index)
+                                        )
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.trailing)
+                                        .disabled(isLoadingStoredPassword)
+                                    } else {
+                                        SecureField(
+                                            FeatureL10n.text(.passwordField),
+                                            text: passwordBinding(at: index)
+                                        )
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.trailing)
+                                        .disabled(isLoadingStoredPassword)
+                                    }
                                 }
-                            }
-                            .disabled(isLoadingStoredPassword)
-                            if isLoadingStoredPassword {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                Button(FeatureL10n.text(revealPassword ? .actionHide : .actionReveal), systemImage: revealPassword ? "eye.slash" : "eye") {
-                                    revealPassword.toggle()
+
+                                if isLoadingStoredPassword {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Button(
+                                        FeatureL10n.text(revealPassword ? .actionHide : .actionReveal),
+                                        systemImage: revealPassword ? "eye.slash" : "eye"
+                                    ) {
+                                        revealPassword.toggle()
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(.secondary)
                                 }
                             }
                         }
                     }
+
                     ForEach(accessKeyIndices, id: \.self) { index in
                         if case .accessKey(let id) = draft.authenticationMethods[index].kind {
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(credential(id)?.label ?? FeatureL10n.text(.keyUnavailable))
-                                    Text(credential(id)?.accessKey?.algorithm.displayName ?? FeatureL10n.text(.credentialsAccessKey))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                let position = accessKeyIndices.firstIndex(of: index) ?? 0
-                                Button(FeatureL10n.text(.hostsMoveUp), systemImage: "arrow.up") { moveAccessKey(index, by: -1) }
-                                    .labelStyle(.iconOnly).disabled(position == 0)
-                                Button(FeatureL10n.text(.hostsMoveDown), systemImage: "arrow.down") { moveAccessKey(index, by: 1) }
-                                    .labelStyle(.iconOnly).disabled(position == accessKeyIndices.count - 1)
-                                Button(FeatureL10n.text(.hostsRemove), systemImage: "minus.circle", role: .destructive) {
-                                    draft.removeAuthenticationMethod(at: index)
-                                }
-                                .labelStyle(.iconOnly)
-                            }
+                            InspectorGroupDivider()
+                            accessKeyRow(id: id, at: index)
                         }
                     }
-                    if model.activeCredentials.isEmpty {
-                        Text(FeatureL10n.text(.featureIdentityEditorNoAccessKeysYetCreateOneIn))
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else if availableAccessKeys.isEmpty {
-                        Text(FeatureL10n.text(.featureIdentityEditorAllAvailableAccessKeysAreAlreadyAdded))
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Menu("Add Access Key", systemImage: "key.horizontal") {
-                            ForEach(availableAccessKeys) { credential in
-                                Button {
-                                    addAccessKey(credential.id)
-                                } label: {
-                                    Label(
-                                        credential.label,
-                                        systemImage: credential.accessKey?.backend == .secureEnclave
-                                            ? "touchid"
-                                            : "key.horizontal"
-                                    )
-                                }
-                            }
-                        }
-                    }
+
+                    InspectorGroupDivider()
+                    accessKeyPicker
                 }
-            }.formStyle(.grouped)
-        } save: {
-            hasTriggeredSave = true
-            await onSave(draft)
-        } cancel: {
-            hasTriggeredSave = true
-            close()
+            }
+        } actions: {
+            if explicitImport {
+                importActions
+            } else if isCreatingIdentity {
+                createActions
+            } else if hasChanges {
+                editActions
+            }
         }
+        .frame(width: inline ? nil : 420, height: inline ? nil : 600)
         .onDisappear {
-            guard inline && !explicitImport && !hasTriggeredSave && !isDiscarding() else { return }
+            guard inline && !explicitImport && !isCreatingIdentity && hasChanges,
+                  !hasTriggeredSave && !isDiscarding() else { return }
             Task { await onSave(draft) }
         }
         .onChange(of: draft) { _, value in onDraftChange?(value) }
@@ -139,6 +133,7 @@ struct IdentityEditor: View {
             guard isLoadingStoredPassword else { return }
             let loaded = await model.loadIdentityPassword(into: draft)
             draft = loaded
+            originalDraft = loaded
             isLoadingStoredPassword = false
         }
         .alert(FeatureL10n.text(.featureIdentityEditorUnableToLoadIdentityPassword), isPresented: Binding(
@@ -149,6 +144,129 @@ struct IdentityEditor: View {
         } message: {
             Text(model.presentedError?.message ?? "")
         }
+    }
+
+    private func accessKeyRow(id: UUID, at index: Int) -> some View {
+        let value = credential(id)
+
+        return HStack(spacing: 11) {
+            Text(value?.label ?? FeatureL10n.text(.keyUnavailable))
+                .fontWeight(.medium)
+                .lineLimit(1)
+
+            Text(accessKeyDescription(value))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Button(FeatureL10n.text(.hostsRemove), systemImage: "xmark.circle.fill", role: .destructive) {
+                draft.removeAuthenticationMethod(at: index)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 48)
+        .contentShape(.rect)
+        .draggable(id.uuidString)
+        .dropDestination(for: String.self) { values, _ in
+            guard let source = values.first.flatMap(UUID.init(uuidString:)) else { return false }
+            return reorderAccessKey(source, to: id)
+        }
+    }
+
+    @ViewBuilder
+    private var accessKeyPicker: some View {
+        if !availableAccessKeys.isEmpty {
+            Menu {
+                ForEach(availableAccessKeys) { credential in
+                    Button {
+                        addAccessKey(credential.id)
+                    } label: {
+                        Label(
+                            "\(credential.label) · \(accessKeyDescription(credential))",
+                            systemImage: credential.accessKey?.backend == .secureEnclave
+                                ? "touchid"
+                                : "key.horizontal"
+                        )
+                    }
+                }
+            } label: {
+                Label(FeatureL10n.text(.credentialsAccessKey), systemImage: "plus")
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .frame(minHeight: 42)
+        } else {
+            Button {} label: {
+                Label(FeatureL10n.text(.credentialsAccessKey), systemImage: "plus")
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+            .disabled(true)
+            .frame(minHeight: 42)
+        }
+    }
+
+    private var importActions: some View {
+        InspectorActionArea {
+            Button(FeatureL10n.text(.historyCancel)) {
+                hasTriggeredSave = true
+                close()
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .keyboardShortcut(.cancelAction)
+
+            Button {
+                hasTriggeredSave = true
+                Task { await onSave(draft) }
+            } label: {
+                Text(FeatureL10n.text(.externalImportIdentityAction))
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .controlSize(.large)
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
+            .tint(.blue)
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private var createActions: some View {
+        InspectorActionArea {
+            InspectorProminentAction(title: FeatureL10n.text(.identityEditorAdd)) {
+                hasTriggeredSave = true
+                Task { await onSave(draft) }
+            }
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private var editActions: some View {
+        InspectorActionArea {
+            InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
+                draft = originalDraft
+                revealPassword = false
+            }
+        }
+    }
+
+    private var isCreatingIdentity: Bool { originalDraft.id == nil }
+    private var hasChanges: Bool { draft != originalDraft }
+
+    private func accessKeyDescription(_ credential: CredentialMetadata?) -> String {
+        let algorithm = credential?.accessKey?.algorithm.displayName ?? FeatureL10n.text(.credentialsAccessKey)
+        guard credential?.accessKey?.backend == .secureEnclave else { return algorithm }
+        return "\(algorithm) / \(FeatureL10n.text(.credentialsSecureEnclave))"
     }
 
     private func credential(_ id: UUID) -> CredentialMetadata? { model.credentials.first { $0.id == id } }
@@ -185,8 +303,13 @@ struct IdentityEditor: View {
     private func addAccessKey(_ id: UUID) {
         draft.addAccessKey(id)
     }
-    private func moveAccessKey(_ index: Int, by delta: Int) {
-        draft.moveAccessKey(at: index, by: delta)
+
+    private func reorderAccessKey(_ sourceID: UUID, to targetID: UUID) -> Bool {
+        guard sourceID != targetID else { return false }
+        withAnimation(.smooth(duration: 0.2)) {
+            draft.reorderAccessKey(sourceID, to: targetID)
+        }
+        return true
     }
     private func close() {
         if let onClose { onClose() } else { dismiss() }

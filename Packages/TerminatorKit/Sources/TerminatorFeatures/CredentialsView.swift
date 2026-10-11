@@ -54,7 +54,7 @@ struct CredentialsView: View {
                     if saved != nil, let key = pendingExternalKey, let bundle = pendingExternalBundle {
                         model.consumeExternalAccessKey(key, sourceID: bundle.source.id)
                     }
-                    if isExplicitAccessKeyImport, saved != nil { closeInspector() }
+                    if (isExplicitAccessKeyImport || value.credentialID == nil), saved != nil { closeInspector() }
                 } onClose: {
                     closeInspector()
                 }
@@ -81,7 +81,8 @@ struct CredentialsView: View {
                             closeInspector()
                         }
                     } else {
-                        _ = await model.saveIdentity(value)
+                        let saved = await model.saveIdentity(value)
+                        if value.id == nil, saved { closeInspector() }
                     }
                 } onClose: {
                     closeInspector()
@@ -91,7 +92,9 @@ struct CredentialsView: View {
             }
             }
             .animation(.easeInOut(duration: 0.22), value: inspectorSessionID))
-        }, isInspectorPresented: hasInspector, onContentInteraction: { closeInspector() })
+        }, inspectorWidth: InspectorMetrics.compactWidth,
+           isInspectorPresented: hasInspector,
+           onContentInteraction: { closeInspector() })
         .navigationTitle(FeatureL10n.text(.overviewCredentials))
         .toolbar {
             credentialsToolbar
@@ -175,16 +178,12 @@ struct CredentialsView: View {
     }
 
     private func identityRow(_ identity: IdentityProfile) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "person.badge.key").foregroundStyle(.tint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(identityDisplayName(identity)).fontWeight(.medium)
-                Text(FeatureL10n.text(identity.authenticationMethods.count == 1 ? "identity.summary.one" : "identity.summary.many", identity.username, identity.authenticationMethods.count))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .contentShape(Rectangle())
+        credentialCardLabel(
+            title: identityDisplayName(identity),
+            subtitle: FeatureL10n.text(identity.authenticationMethods.count == 1 ? "identity.summary.one" : "identity.summary.many", identity.username, identity.authenticationMethods.count),
+            icon: "person.badge.key",
+            isSelected: identityDraft?.id == identity.id
+        )
         .onTapGesture { if !identity.isDeleted { openIdentity(IdentityDraft(identity: identity)) } }
         .contextMenu {
             if !identity.isDeleted {
@@ -193,7 +192,12 @@ struct CredentialsView: View {
                     .disabled(model.identityUsageCount(id: identity.id) > 0)
             }
         }
-        .padding(.vertical, 3)
+    }
+
+    private var credentialGridColumns: [GridItem] {
+        [GridItem(.adaptive(
+            minimum: CredentialCardMetrics.minimumWidth
+        ), spacing: CredentialCardMetrics.spacing, alignment: .leading)]
     }
 
     @ViewBuilder
@@ -215,82 +219,76 @@ struct CredentialsView: View {
             ContentUnavailableView.search(text: searchText)
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 12) {
                     if !identities.isEmpty {
                         sectionHeader(FeatureL10n.text(.credentialsIdentity), id: "identities")
-                            .padding(.horizontal, 12)
-                            .padding(.top, 8)
+                            .padding(.top, 4)
                         if !collapsedCredentialGroups.contains("identities") {
-                            ForEach(identities) { identity in
-                                identityRow(identity)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
+                            LazyVGrid(columns: credentialGridColumns, alignment: .leading, spacing: CredentialCardMetrics.spacing) {
+                                ForEach(identities) { identity in
+                                    identityRow(identity)
+                                }
                             }
                         }
                     }
                     if !available.isEmpty {
                         sectionHeader(FeatureL10n.text(.sectionCredentials), id: "credentials")
-                            .padding(.horizontal, 12)
-                            .padding(.top, 8)
+                            .padding(.top, 4)
                         if !collapsedCredentialGroups.contains("credentials") {
-                            ForEach(available) { credential in
-                                credentialRow(credential)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
+                            LazyVGrid(columns: credentialGridColumns, alignment: .leading, spacing: CredentialCardMetrics.spacing) {
+                                ForEach(available) { credential in
+                                    credentialRow(credential)
+                                }
                             }
                         }
                     }
                     if model.capabilities.externalFileAccess {
-                        ForEach(openSSHKeys) { key in
-                            HStack {
-                                Image(systemName: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(key.importError == nil ? Color.secondary : Color.red)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(key.label).fontWeight(.medium)
-                                    Text(key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path))
-                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        LazyVGrid(columns: credentialGridColumns, alignment: .leading, spacing: CredentialCardMetrics.spacing) {
+                            ForEach(openSSHKeys) { key in
+                                credentialCardLabel(
+                                    title: key.label,
+                                    subtitle: key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path),
+                                    icon: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill",
+                                    iconColor: key.importError == nil ? .secondary : .red
+                                )
+                                .onTapGesture {
+                                    if key.importError == nil { openDiscoveredKey(key) }
                                 }
-                                Spacer()
-                                if key.importError == nil {
-                                    Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredKey(key) }
-                                        .labelStyle(.iconOnly)
+                                .contextMenu {
+                                    if key.importError == nil {
+                                        Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
+                                            openDiscoveredKey(key)
+                                        }
+                                    }
                                 }
+                                .help(key.importError ?? key.privateKeyURL.path)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .help(key.importError ?? key.privateKeyURL.path)
-                        }
-                        ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
-                            ForEach(bundle.identities.filter(matchesSearch)) { identity in
-                                externalIdentityRow(identity, bundle: bundle)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                            }
-                            ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
-                                externalKeyRow(key, bundle: bundle)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
+                            ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
+                                ForEach(bundle.identities.filter(matchesSearch)) { identity in
+                                    externalIdentityRow(identity, bundle: bundle)
+                                }
+                                ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
+                                    externalKeyRow(key, bundle: bundle)
+                                }
                             }
                         }
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier("credentials-list")
         }
     }
 
     private func credentialRow(_ credential: CredentialMetadata) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: credentialIcon(for: credential))
-                .foregroundStyle(credential.isSecretAvailable ? Color.accentColor : Color.secondary)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(credential.label).fontWeight(.medium)
-                Text(status(for: credential)).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .contentShape(Rectangle())
+        credentialCardLabel(
+            title: credential.label,
+            subtitle: status(for: credential),
+            icon: credentialIcon(for: credential),
+            iconColor: credential.isSecretAvailable ? .accentColor : .secondary,
+            isSelected: selectedCredential?.id == credential.id
+        )
         .onTapGesture { if credential.kind == .accessKey { openCredential(credential) } }
         .contextMenu {
             if credential.kind == .accessKey {
@@ -307,7 +305,6 @@ struct CredentialsView: View {
                     Button(FeatureL10n.text(.credentialsPurge), systemImage: "trash", role: .destructive) { pendingPurge = credential }
                 }
         }
-        .padding(.vertical, 3)
     }
 
     private var availableOpenSSHKeys: [DiscoveredAccessKey] {
@@ -437,6 +434,7 @@ struct CredentialsView: View {
                 Image(systemName: collapsedCredentialGroups.contains(id) ? "chevron.right" : "chevron.down")
                     .font(.caption.weight(.semibold))
                 Text(title)
+                Spacer(minLength: 0)
             }.contentShape(Rectangle())
         }.buttonStyle(.plain)
     }
@@ -448,9 +446,9 @@ struct CredentialsView: View {
             pendingExternalBundle = bundle
             openAccessKey(model.externalAccessKeyDraft(key), importingFromOpenSSH: true)
         } label: {
-            importEntityLabel(
-                key.label.isEmpty ? FeatureL10n.text(.credentialsAccessKey) : key.label,
-                detail: FeatureL10n.text(.externalImportAccessKeyDetail, bundle.source.displayName),
+            credentialCardLabel(
+                title: key.label.isEmpty ? FeatureL10n.text(.credentialsAccessKey) : key.label,
+                subtitle: FeatureL10n.text(.externalImportAccessKeyDetail, bundle.source.displayName),
                 icon: "key.horizontal"
             )
         }.buttonStyle(.plain)
@@ -465,24 +463,58 @@ struct CredentialsView: View {
             inspectorSessionID = UUID()
             identityDraft = model.externalIdentityDraft(identity)
         } label: {
-            importEntityLabel(
-                identity.label.isEmpty ? identity.username : identity.label,
-                detail: FeatureL10n.text(.externalImportIdentityDetail, bundle.source.displayName),
+            credentialCardLabel(
+                title: identity.label.isEmpty ? identity.username : identity.label,
+                subtitle: FeatureL10n.text(.externalImportIdentityDetail, bundle.source.displayName),
                 icon: "person.badge.key"
             )
         }.buttonStyle(.plain)
     }
 
-    private func importEntityLabel(_ title: String, detail: String, icon: String) -> some View {
-        HStack {
-            Image(systemName: icon).foregroundStyle(.secondary)
+    private func credentialCardLabel(
+        title: String,
+        subtitle: String,
+        icon: String,
+        iconColor: Color = .secondary,
+        isSelected: Bool = false
+    ) -> some View {
+        HStack(spacing: CredentialCardMetrics.iconInset) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(iconColor)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: CredentialCardMetrics.iconSize, height: CredentialCardMetrics.iconSize)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).fontWeight(.medium)
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
-            Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-        }.contentShape(Rectangle())
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(CredentialCardMetrics.iconInset)
+        .frame(maxWidth: .infinity, minHeight: CredentialCardMetrics.height, maxHeight: CredentialCardMetrics.height, alignment: .leading)
+        .contentShape(Rectangle())
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: CredentialCardMetrics.cornerRadius))
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: CredentialCardMetrics.cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.28), lineWidth: 1.5)
+            }
+        }
     }
 
+}
+
+private enum CredentialCardMetrics {
+    static let minimumWidth: CGFloat = 250
+    static let iconSize: CGFloat = 28
+    static let iconInset: CGFloat = 12
+    static let height: CGFloat = iconSize + iconInset * 2
+    static let spacing: CGFloat = 8
+    static let cornerRadius: CGFloat = 20
 }

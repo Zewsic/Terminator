@@ -47,6 +47,18 @@ public struct SSHSessionHandle: Sendable {
     public func close() async { await closer() }
 }
 
+public struct SSHExecResult: Equatable, Sendable {
+    public var stdout: String
+    public var stderr: String
+    public var exitCode: Int
+
+    public init(stdout: String, stderr: String, exitCode: Int) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+}
+
 public protocol SSHConnectionCoordinating: Sendable {
     func prepare(host: HostProfile, prompting: any SSHConnectionPrompting) async throws
     func openSession(
@@ -55,6 +67,7 @@ public protocol SSHConnectionCoordinating: Sendable {
         size: TerminalSize,
         persistence: SessionPersistence
     ) async throws -> SSHSessionHandle
+    func exec(host: HostProfile, command: String) async throws -> SSHExecResult
     func state(for hostID: UUID) async -> SSHConnectionPhase
     func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async
@@ -115,8 +128,9 @@ public struct AttachDescriptor: Codable, Equatable, Sendable {
 
 public protocol ExternalTerminalConnecting: Sendable {
     func installedApplications() async -> [TerminalApplication]
-    func connect(host: HostProfile, terminal: TerminalApplication) async throws
+    func connect(host: HostProfile, terminal: TerminalApplication) async throws -> DetectedHostOS?
     func makeConnectionCommand(host: HostProfile) async throws -> String
+    func exec(host: HostProfile, command: String) async throws -> SSHExecResult
     func state(for hostID: UUID) async -> SSHConnectionPhase
     func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async

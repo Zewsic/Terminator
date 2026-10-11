@@ -51,7 +51,7 @@ private actor ConnectionServiceSupervisor {
     }
 
     func ensureRunning() async {
-        if isControlSocketLive() { return }
+        if isOurServiceRunning() { return }
         if let recoveryTask {
             await recoveryTask.value
             return
@@ -66,32 +66,33 @@ private actor ConnectionServiceSupervisor {
     }
 
     private func recoverService() async {
-        if agent.status == .enabled {
-            if await waitForService(attempts: 10) { return }
-        }
-
-        let canRepairRegistration = Date.now.timeIntervalSince(lastRegistrationRepair) >= 30
-        if agent.status != .enabled || canRepairRegistration {
-            lastRegistrationRepair = .now
-            do {
-                if agent.status == .enabled { try await agent.unregister() }
-                try agent.register()
-            } catch {
-                spawnFallback()
-            }
-        }
-
-        if await waitForService(attempts: 30) { return }
+        if isOurServiceRunning() { return }
+        lastRegistrationRepair = .now
+        terminateRunningService()
+        try? await Task.sleep(for: .milliseconds(200))
+        do {
+            if agent.status == .enabled { try await agent.unregister() }
+        } catch {}
+        terminateRunningService()
+        try? await Task.sleep(for: .milliseconds(150))
         spawnFallback()
-        _ = await waitForService(attempts: 20)
+        if await waitForOurService(attempts: 30) { return }
+        do { try agent.register() } catch { spawnFallback() }
+        _ = await waitForOurService(attempts: 20)
     }
 
-    private func waitForService(attempts: Int) async -> Bool {
+    private func waitForOurService(attempts: Int) async -> Bool {
         for _ in 0..<attempts {
-            if isControlSocketLive() { return true }
+            if isOurServiceRunning() { return true }
             try? await Task.sleep(for: .milliseconds(100))
         }
         return false
+    }
+
+    private func isOurServiceRunning() -> Bool {
+        guard isControlSocketLive() else { return false }
+        guard let running = runningServiceExecutable() else { return false }
+        return running.resolvingSymlinksInPath().path == bundledHelperURL().resolvingSymlinksInPath().path
     }
 
     private func isControlSocketLive() -> Bool {
@@ -113,6 +114,50 @@ private actor ConnectionServiceSupervisor {
             }
         }
         return connected == 0
+    }
+
+    private func bundledHelperURL() -> URL {
+        Bundle.main.bundleURL.appending(path: "Contents/Helpers/terminator-service")
+    }
+
+    private func runningServiceExecutable() -> URL? {
+        guard let pid = controlSocketPID() else { return nil }
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let count = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+        guard count > 0 else { return nil }
+        return URL(fileURLWithPath: String(cString: buffer))
+    }
+
+    private func controlSocketPID() -> pid_t? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
+        proc.arguments = ["-t", ConnectionServicePaths.controlSocketURL.path]
+        let stdout = Pipe()
+        proc.standardOutput = stdout
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch {
+            return nil
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        guard let line = String(data: data, encoding: .utf8)?
+            .split(whereSeparator: \.isNewline)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            let value = pid_t(line)
+        else { return nil }
+        return value
+    }
+
+    private func terminateRunningService() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        process.arguments = ["-TERM", "terminator-service"]
+        process.qualityOfService = .userInitiated
+        try? process.run()
+        process.waitUntilExit()
     }
 
     private func spawnFallback() {

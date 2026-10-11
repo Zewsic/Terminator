@@ -22,6 +22,7 @@ final class HostRecord {
     var remoteShellPresetRawValue: String = RemoteShellPreset.loginShell.rawValue
     var remoteShellCustomPath: String = ""
     var connectCommands: String = ""
+    var detectedOSData: Data? = nil
     var createdAt: Date
     var updatedAt: Date
     var deletedAt: Date?
@@ -40,6 +41,7 @@ final class HostRecord {
         remoteShellPresetRawValue = profile.remoteShell.preset.rawValue
         remoteShellCustomPath = profile.remoteShell.customPath
         connectCommands = profile.connectCommands
+        detectedOSData = profile.detectedOS.flatMap { try? JSONEncoder().encode($0) }
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt
@@ -72,6 +74,7 @@ final class HostRecord {
                 customPath: remoteShellCustomPath
             ),
             connectCommands: connectCommands,
+            detectedOS: detectedOSData.flatMap { try? JSONDecoder().decode(DetectedHostOS.self, from: $0) },
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -89,13 +92,82 @@ final class HostRecord {
         remoteShellPresetRawValue = profile.remoteShell.preset.rawValue
         remoteShellCustomPath = profile.remoteShell.customPath
         connectCommands = profile.connectCommands
+        detectedOSData = profile.detectedOS.flatMap { try? JSONEncoder().encode($0) }
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt
         applyAuthentication(profile.authentication)
     }
+}
 
-    private func applyAuthentication(_ authentication: HostAuthentication) {
+@Model
+final class TunnelRecord {
+    @Attribute(.unique) var id: UUID
+    var displayName: String
+    var kindRawValue: String
+    var sourceData: Data
+    var destinationData: Data
+    var listenAddress: String
+    var listenPort: Int
+    var targetAddress: String
+    var targetPort: Int
+    var connectAutomatically: Bool
+    var createdAt: Date
+    var updatedAt: Date
+    var deletedAt: Date?
+
+    init(profile: TunnelProfile) {
+        id = profile.id
+        displayName = profile.displayName
+        kindRawValue = profile.kind.rawValue
+        sourceData = (try? JSONEncoder().encode(profile.source)) ?? Data()
+        destinationData = (try? JSONEncoder().encode(profile.destination)) ?? Data()
+        listenAddress = profile.listenAddress
+        listenPort = profile.listenPort
+        targetAddress = profile.targetAddress
+        targetPort = profile.targetPort
+        connectAutomatically = profile.connectAutomatically
+        createdAt = profile.createdAt
+        updatedAt = profile.updatedAt
+        deletedAt = profile.deletedAt
+    }
+
+    var domain: TunnelProfile {
+        TunnelProfile(
+            id: id,
+            displayName: displayName,
+            kind: TunnelKind(rawValue: kindRawValue) ?? .local,
+            source: (try? JSONDecoder().decode(TunnelEndpoint.self, from: sourceData)) ?? .thisMac,
+            destination: (try? JSONDecoder().decode(TunnelEndpoint.self, from: destinationData)) ?? .manual(id: UUID(), hostname: "", port: 22),
+            listenAddress: listenAddress,
+            listenPort: listenPort,
+            targetAddress: targetAddress,
+            targetPort: targetPort,
+            connectAutomatically: connectAutomatically,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            deletedAt: deletedAt
+        )
+    }
+
+    func apply(_ profile: TunnelProfile) {
+        displayName = profile.displayName
+        kindRawValue = profile.kind.rawValue
+        sourceData = (try? JSONEncoder().encode(profile.source)) ?? Data()
+        destinationData = (try? JSONEncoder().encode(profile.destination)) ?? Data()
+        listenAddress = profile.listenAddress
+        listenPort = profile.listenPort
+        targetAddress = profile.targetAddress
+        targetPort = profile.targetPort
+        connectAutomatically = profile.connectAutomatically
+        createdAt = profile.createdAt
+        updatedAt = profile.updatedAt
+        deletedAt = profile.deletedAt
+    }
+}
+
+extension HostRecord {
+    fileprivate func applyAuthentication(_ authentication: HostAuthentication) {
         switch authentication {
         case .identity(let id):
             authenticationModeRawValue = "identity"

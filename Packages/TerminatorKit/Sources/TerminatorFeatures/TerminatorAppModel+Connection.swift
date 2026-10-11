@@ -17,9 +17,11 @@ extension TerminatorAppModel {
         hostConnectionPhases[host.id] = .resolving
         beginMonitoringConnection(hostID: host.id, service: externalTerminalService)
         do {
-            try await externalTerminalService.connect(host: host, terminal: terminal)
+            let detectedOS = try await externalTerminalService.connect(host: host, terminal: terminal)
             connectionPhase = .connected
             hostConnectionPhases[host.id] = .connected
+            await applyDetectedOS(detectedOS, to: host.id)
+            Task { await self.refreshDetectedOS(hostID: host.id) }
         } catch is CancellationError {
             connectionPhase = .disconnected
             hostConnectionPhases[host.id] = .disconnected
@@ -41,9 +43,11 @@ extension TerminatorAppModel {
         hostConnectionPhases[host.id] = .resolving
         beginMonitoringConnection(hostID: host.id, service: externalTerminalService)
         do {
-            try await externalTerminalService.connect(host: host, terminal: terminal)
+            let detectedOS = try await externalTerminalService.connect(host: host, terminal: terminal)
             hostConnectionPhases[host.id] = .connected
             if connectionHost?.id != host.id { backgroundConnectionHost = nil }
+            await applyDetectedOS(detectedOS, to: host.id)
+            Task { await self.refreshDetectedOS(hostID: host.id) }
         } catch is CancellationError {
             hostConnectionPhases[host.id] = .disconnected
             stopMonitoringConnection(hostID: host.id)
@@ -172,6 +176,10 @@ extension TerminatorAppModel {
                 guard !Task.isCancelled, let self else { return }
                 self.hostConnectionPhases[hostID] = phase
                 if self.connectionHost?.id == hostID { self.connectionPhase = phase }
+                if case .connected = phase {
+                    Task { await self.refreshDetectedOS(hostID: hostID) }
+                    Task { await self.startAutomaticTunnels(for: hostID) }
+                }
             }
         }
     }
@@ -179,6 +187,69 @@ extension TerminatorAppModel {
     private func stopMonitoringConnection(hostID: UUID) {
         connectionMonitors[hostID]?.cancel()
         connectionMonitors[hostID] = nil
+    }
+
+    func applyDetectedOS(_ os: DetectedHostOS?, to hostID: UUID) async {
+        guard let os else { return }
+        do {
+            let current = try await hostRepository.host(id: hostID)
+            guard let current, current.detectedOS == nil else {
+                await load()
+                return
+            }
+            try await hostRepository.saveHost(current.applyingDetectedOS(os))
+            await load()
+        } catch {
+            return
+        }
+    }
+
+    func refreshDetectedOS(hostID: UUID) async {
+        for _ in 0..<10 {
+            if let cached = hosts.first(where: { $0.id == hostID }), cached.detectedOS != nil {
+                return
+            }
+            let latest = try? await hostRepository.host(id: hostID)
+            if let latest, latest.detectedOS != nil {
+                await load()
+                return
+            }
+            if let latest {
+                await detectOperatingSystemIfNeeded(latest)
+                if hosts.first(where: { $0.id == hostID })?.detectedOS != nil { return }
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        }
+    }
+
+    func detectOperatingSystemIfNeeded(_ host: HostProfile) async {
+        guard host.detectedOS == nil, let externalTerminalService else { return }
+        do {
+            if let latest = try await hostRepository.host(id: host.id), latest.detectedOS != nil {
+                await load()
+                return
+            }
+        } catch {
+            return
+        }
+        let posix = try? await externalTerminalService.exec(host: host, command: HostOSProbe.posixCommand)
+        var detected = posix.flatMap { HostOSProbe.parse($0.stdout + "\n" + $0.stderr) }
+        if detected == nil {
+            let windows = try? await externalTerminalService.exec(host: host, command: HostOSProbe.windowsCommand)
+            detected = windows.flatMap { HostOSProbe.parse($0.stdout + "\n" + $0.stderr) }
+        }
+        guard let detected else { return }
+        do {
+            let current = try await hostRepository.host(id: host.id) ?? host
+            guard current.detectedOS == nil else {
+                await load()
+                return
+            }
+            try await hostRepository.saveHost(current.applyingDetectedOS(detected))
+            await load()
+        } catch {
+            return
+        }
     }
 
     public func dismissConnection() {

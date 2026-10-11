@@ -28,7 +28,8 @@ let package = Package(
         .target(name: "TerminatorCore", resources: [.process("Resources")]),
         .target(
             name: "TerminatorPersistence",
-            dependencies: ["TerminatorCore"]
+            dependencies: ["TerminatorCore"],
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .target(
             name: "TerminatorSecurity",

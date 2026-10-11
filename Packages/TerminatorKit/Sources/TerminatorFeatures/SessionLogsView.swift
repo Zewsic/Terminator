@@ -20,7 +20,7 @@ struct SessionLogsView: View {
             if model.sessionLogs.isEmpty {
                 ContentUnavailableView(FeatureL10n.text(.sessionLogsNoSessionLogs), systemImage: "text.document", description: Text(FeatureL10n.text(.sessionLogsRemoteTerminalOutputWillBeEncryptedAnd)))
             } else {
-                InspectorLayout {
+                InspectorLayout(content: {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(filteredLogs) { log in
@@ -59,11 +59,12 @@ struct SessionLogsView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                } inspector: {
+                }, inspector: {
                     if let log = model.sessionLogs.first(where: { $0.id == selectedLogID }) {
                         SessionLogInspector(log: log) { selectedLogID = nil }
                     }
-                } onContentInteraction: { selectedLogID = nil }
+                }, inspectorWidth: InspectorMetrics.compactWidth,
+                  onContentInteraction: { selectedLogID = nil })
             }
         }
         .navigationTitle(FeatureL10n.text(.sessionLogsLogs))
@@ -92,21 +93,34 @@ struct SessionLogsView: View {
 private struct SessionLogInspector: View {
     let log: SessionLogMetadata
     let onClose: () -> Void
+    @State private var isDetailsExpanded = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(log.hostDisplayName).font(.title2.weight(.semibold))
-                Spacer()
+        InspectorScreen(title: log.hostDisplayName) {
+            InspectorCollapsibleSection(
+                FeatureL10n.text(.inspectorSessionDetails),
+                isExpanded: $isDetailsExpanded
+            ) {
+                InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.featureSessionLogsTerminal)) {
+                        InspectorReadOnlyValue(value: log.terminal.displayName)
+                    }
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.featureContainersState)) {
+                        InspectorReadOnlyValue(value: log.state.rawValue.capitalized)
+                    }
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.featureSessionLogsStarted)) {
+                        InspectorReadOnlyValue(value: log.startedAt.formatted())
+                    }
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.featureSessionLogsSize)) {
+                        InspectorReadOnlyValue(
+                            value: ByteCountFormatter.string(fromByteCount: log.byteCount, countStyle: .file)
+                        )
+                    }
+                }
             }
-            .padding()
-            Form {
-                LabeledContent(FeatureL10n.text(.featureSessionLogsTerminal), value: log.terminal.displayName)
-                LabeledContent(FeatureL10n.text(.featureContainersState), value: log.state.rawValue.capitalized)
-                LabeledContent(FeatureL10n.text(.featureSessionLogsStarted), value: log.startedAt.formatted())
-                LabeledContent(FeatureL10n.text(.featureSessionLogsSize), value: ByteCountFormatter.string(fromByteCount: log.byteCount, countStyle: .file))
-            }
-            .formStyle(.grouped)
         }
     }
 }

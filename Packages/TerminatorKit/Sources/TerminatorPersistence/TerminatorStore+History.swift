@@ -29,6 +29,7 @@ extension TerminatorStore {
         case .host: try revertHost(using: entry)
         case .credential: try revertCredential(using: entry)
         case .identity: try revertIdentity(using: entry)
+        case .tunnel: try revertTunnel(using: entry)
         }
         try modelContext.save()
     }
@@ -38,6 +39,13 @@ extension TerminatorStore {
         let target = try entry.beforeSnapshot.map { try decoder.decode(HostProfile.self, from: $0) }
         let after: HostProfile
         if var target {
+            if case .manual(let username, let targetMethods) = target.authentication {
+                let currentMethods = before?.authentication.authenticationMethods ?? []
+                target.authentication = .manual(
+                    username: username,
+                    authenticationMethods: preservingCurrentPassword(in: targetMethods, currentMethods: currentMethods)
+                )
+            }
             try validateReferences(for: target)
             target.updatedAt = .now
             try persistHost(target)
@@ -70,11 +78,32 @@ extension TerminatorStore {
         try appendHistory(entity: .credential, entityID: entry.entityID, operation: .restored, before: before, after: after)
     }
 
+    func revertTunnel(using entry: HistoryEntry) throws {
+        let before = try fetchTunnel(id: entry.entityID)?.domain
+        let target = try entry.beforeSnapshot.map { try decoder.decode(TunnelProfile.self, from: $0) }
+        let after: TunnelProfile
+        if var target {
+            target.updatedAt = .now
+            try persistTunnel(target)
+            after = target
+        } else if var current = before {
+            current.deletedAt = .now
+            current.updatedAt = .now
+            try persistTunnel(current)
+            after = current
+        } else { throw PersistenceError.tunnelNotFound }
+        try appendHistory(entity: .tunnel, entityID: entry.entityID, operation: .restored, before: before, after: after)
+    }
+
     func revertIdentity(using entry: HistoryEntry) throws {
         let before = try fetchIdentity(id: entry.entityID)?.domain
         let target = try entry.beforeSnapshot.map { try decoder.decode(IdentityProfile.self, from: $0) }
         let after: IdentityProfile
         if var target {
+            target.authenticationMethods = preservingCurrentPassword(
+                in: target.authenticationMethods,
+                currentMethods: before?.authenticationMethods ?? []
+            )
             try validateCredentialReferences(target.credentialIDs)
             target.updatedAt = .now
             try persistIdentity(target)
@@ -87,6 +116,22 @@ extension TerminatorStore {
             after = current
         } else { throw PersistenceError.identityNotFound }
         try appendHistory(entity: .identity, entityID: entry.entityID, operation: .restored, before: before, after: after)
+    }
+
+    /// History stores references to secrets, not the secret bytes themselves. A password may
+    /// have been replaced and purged after a snapshot was recorded, so reverting metadata must
+    /// retain the current password reference instead of resurrecting an unavailable one.
+    private func preservingCurrentPassword(
+        in historicalMethods: [AuthenticationMethod],
+        currentMethods: [AuthenticationMethod]
+    ) -> [AuthenticationMethod] {
+        var methods = historicalMethods.filter { $0.passwordSecretID == nil }
+        guard let currentPassword = currentMethods.first(where: { $0.passwordSecretID != nil }) else {
+            return methods
+        }
+        let historicalIndex = historicalMethods.firstIndex(where: { $0.passwordSecretID != nil }) ?? 0
+        methods.insert(currentPassword, at: min(historicalIndex, methods.count))
+        return methods
     }
 
 }

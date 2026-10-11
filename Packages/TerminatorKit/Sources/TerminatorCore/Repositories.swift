@@ -63,6 +63,13 @@ public extension KnownHostRepository {
     }
 }
 
+public protocol TunnelRepository: Sendable {
+    func listTunnels(includeDeleted: Bool) async throws -> [TunnelProfile]
+    func tunnel(id: UUID) async throws -> TunnelProfile?
+    func saveTunnel(_ tunnel: TunnelProfile) async throws
+    func deleteTunnel(id: UUID) async throws
+}
+
 public protocol SessionLogRepository: Sendable {
     func listSessionLogs() async throws -> [SessionLogMetadata]
     func sessionLog(id: UUID) async throws -> SessionLogMetadata?

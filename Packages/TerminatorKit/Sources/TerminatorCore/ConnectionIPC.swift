@@ -46,6 +46,9 @@ public enum ConnectionControlRequest: Codable, Sendable {
     case listSessions
     case sessionWrite(sessionID: UUID, text: String)
     case sessionRead(sessionID: UUID, after: Int)
+    case exec(hostID: UUID, command: String)
+    case startTunnel(TunnelProfile)
+    case stopTunnel(UUID)
 }
 
 public enum ConnectionControlResponse: Codable, Sendable {
@@ -57,6 +60,8 @@ public enum ConnectionControlResponse: Codable, Sendable {
     case sessionID(UUID)
     case sessions([SessionAccessSummary])
     case sessionOutput(text: String, next: Int)
+    case exec(stdout: String, stderr: String, exitCode: Int)
+    case connected(detectedOS: DetectedHostOS?)
 }
 
 public struct HostAccessSummary: Codable, Sendable {
@@ -92,6 +97,7 @@ public struct SessionAccessSummary: Codable, Sendable {
 public enum ConnectionControlEvent: Codable, Sendable {
     case phase(hostID: UUID, SSHConnectionPhase)
     case prompt(ConnectionPromptEnvelope)
+    case tunnelPhase(TunnelPhaseEvent)
 }
 
 public enum ConnectionControlFrame: Codable, Sendable {

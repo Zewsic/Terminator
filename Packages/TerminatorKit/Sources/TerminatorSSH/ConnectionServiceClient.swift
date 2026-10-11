@@ -3,11 +3,12 @@ import NIOCore
 import NIOPosix
 import TerminatorCore
 
-public actor ConnectionServiceClient: ExternalTerminalConnecting {
+public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelControlling {
     private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     private var channel: Channel?
     private var pending: [UUID: CheckedContinuation<ConnectionControlResponse, any Error>] = [:]
     private var phaseContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
+    private var tunnelContinuations: [UUID: AsyncStream<TunnelPhaseEvent>.Continuation] = [:]
     private var promptHandler: (@Sendable (ConnectionPromptEnvelope) async -> ConnectionPromptReply)?
     private var isConnecting = false
     private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
@@ -27,13 +28,18 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
         TerminalApplication.allCases
     }
 
-    public func connect(host: HostProfile, terminal: TerminalApplication) async throws {
+    public func connect(host: HostProfile, terminal: TerminalApplication) async throws -> DetectedHostOS? {
         try await connect(hostID: host.id, terminal: terminal)
     }
 
-    public func connect(hostID: UUID, terminal: TerminalApplication = .terminal) async throws {
+    public func connect(hostID: UUID, terminal: TerminalApplication = .terminal) async throws -> DetectedHostOS? {
         let response = try await request(.connect(hostID: hostID, terminal: terminal))
-        if case .failed(let message) = response { throw ConnectionServiceError.failed(message) }
+        switch response {
+        case .ok: return nil
+        case .connected(let os): return os
+        case .failed(let message): throw ConnectionServiceError.failed(message)
+        default: throw ConnectionServiceError.unavailable
+        }
     }
 
     public func makeConnectionCommand(host: HostProfile) async throws -> String {
@@ -66,6 +72,38 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
 
     public func disconnect(hostID: UUID) async {
         _ = try? await request(.disconnect(hostID: hostID))
+    }
+
+    public func startTunnel(_ tunnel: TunnelProfile) async throws {
+        let response = try await request(.startTunnel(tunnel))
+        if case .failed(let message) = response { throw ConnectionServiceError.failed(message) }
+        guard case .ok = response else { throw ConnectionServiceError.unavailable }
+    }
+
+    public func stopTunnel(id: UUID) async {
+        _ = try? await request(.stopTunnel(id))
+    }
+
+    public func tunnelPhases() async -> AsyncStream<TunnelPhaseEvent> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            Task { await self.addTunnelObserver(id, continuation: continuation) }
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeTunnelObserver(id) }
+            }
+        }
+    }
+
+    public func exec(host: HostProfile, command: String) async throws -> SSHExecResult {
+        let response = try await request(.exec(hostID: host.id, command: command))
+        switch response {
+        case .exec(let stdout, let stderr, let exitCode):
+            return SSHExecResult(stdout: stdout, stderr: stderr, exitCode: exitCode)
+        case .failed(let message):
+            throw ConnectionServiceError.failed(message)
+        default:
+            throw ConnectionServiceError.unavailable
+        }
     }
 
     public func listHosts() async throws -> [HostAccessSummary] {
@@ -149,6 +187,8 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
             }
         case .event(.prompt(let envelope)):
             Task { await self.answer(envelope) }
+        case .event(.tunnelPhase(let event)):
+            for continuation in tunnelContinuations.values { continuation.yield(event) }
         case .request:
             break
         }
@@ -190,7 +230,7 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
                 return
             }
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(15))
+                try? await Task.sleep(for: .seconds(30))
                 await self?.timeoutRequest(id)
             }
             let requestOwner = self
@@ -257,6 +297,14 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting {
 
     private func finishReconnect() {
         reconnectTask = nil
+    }
+
+    private func addTunnelObserver(_ id: UUID, continuation: AsyncStream<TunnelPhaseEvent>.Continuation) {
+        tunnelContinuations[id] = continuation
+    }
+
+    private func removeTunnelObserver(_ id: UUID) {
+        tunnelContinuations[id] = nil
     }
 
     private func addPhaseObserver(

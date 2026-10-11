@@ -4,8 +4,11 @@ import TerminatorCore
 struct HostEditor: View {
     @Environment(TerminatorAppModel.self) private var model
     @State private var draft: HostDraft
+    @State private var originalDraft: HostDraft
     @State private var hasTriggeredSave = false
     @State private var revealPassword = false
+    @State private var isConnectionExpanded = true
+    @State private var isOrganizationExpanded = true
     @State private var isLoadingStoredPassword: Bool
     let explicitImport: Bool
     let onSave: @MainActor (HostDraft) async -> Bool
@@ -18,6 +21,7 @@ struct HostEditor: View {
         onClose: @escaping @MainActor () -> Void
     ) {
         _draft = State(initialValue: draft)
+        _originalDraft = State(initialValue: draft)
         _isLoadingStoredPassword = State(initialValue: draft.authenticationMethods.contains { method in
             if case .password(let id) = method.kind { return id != nil }
             return false
@@ -28,130 +32,143 @@ struct HostEditor: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
+        InspectorScreen(title: editorTitle) {
+            InspectorFieldGroup {
+                InspectorFieldRow(FeatureL10n.text(.featureHostEditorDisplayName)) {
                     TextField(FeatureL10n.text(.featureHostEditorDisplayName), text: $draft.displayName)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
                         .accessibilityIdentifier("host-display-name")
                 }
-                Section(FeatureL10n.text(.hostsHost)) {
+            }
+
+            InspectorFieldGroup {
+                InspectorFieldRow(FeatureL10n.text(.featureHostEditorHostnameOrIpAddress)) {
                     TextField(FeatureL10n.text(.featureHostEditorHostnameOrIpAddress), text: $draft.hostname, prompt: Text("127.0.0.1"))
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
                         .accessibilityIdentifier("host-hostname")
-                    TextField(FeatureL10n.text(.hostPort), value: $draft.port, format: .number)
+                }
+                InspectorGroupDivider()
+                InspectorFieldRow(FeatureL10n.text(.hostPort)) {
+                    TextField(FeatureL10n.text(.hostPort), value: $draft.port, format: IntegerFormatStyle<Int>.number.grouping(.never))
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                        .monospacedDigit()
                         .accessibilityIdentifier("host-port")
-                    if !model.activeIdentities.isEmpty {
-                        Picker(FeatureL10n.text(.hostAuthentication), selection: authenticationChoice) {
-                            Text(FeatureL10n.text(.hostAuthenticationManual)).tag(AuthenticationChoice.manual)
+                }
+                if !model.activeIdentities.isEmpty {
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.hostAuthentication)) {
+                        InspectorValueMenu(title: authenticationTitle) {
+                            Button(FeatureL10n.text(.hostAuthenticationManual)) {
+                                authenticationChoice.wrappedValue = .manual
+                            }
                             Divider()
                             ForEach(model.activeIdentities) { identity in
-                                Text(FeatureL10n.text(.identityNameAndUsername, identity.name, identity.username))
-                                    .tag(AuthenticationChoice.identity(identity.id))
+                                Button(FeatureL10n.text(.identityNameAndUsername, identity.name, identity.username)) {
+                                    authenticationChoice.wrappedValue = .identity(identity.id)
+                                }
                             }
                         }
-                        .pickerStyle(.menu)
-                    }
-                    if model.activeIdentities.isEmpty || !draft.usesIdentity {
-                        manualAuthenticationFields
                     }
                 }
-                Section {
-                    Picker(FeatureL10n.text(.hostSessionPersistence), selection: $draft.sessionPersistence) {
-                        Text(FeatureL10n.text(.hostSessionPersistenceNone)).tag(SessionPersistence.none)
-                        Text(FeatureL10n.text(.hostSessionPersistenceTmux)).tag(SessionPersistence.tmux)
-                        Text(FeatureL10n.text(.hostSessionPersistenceScreen)).tag(SessionPersistence.screen)
+                if model.activeIdentities.isEmpty || !draft.usesIdentity {
+                    manualAuthenticationFields
+                }
+            }
+
+            InspectorCollapsibleSection(FeatureL10n.text(.hostConnection), isExpanded: $isConnectionExpanded) {
+                InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.hostSessionPersistence)) {
+                        InspectorValueMenu(title: sessionTitle) {
+                            Button(FeatureL10n.text(.hostSessionPersistenceNone)) { draft.sessionPersistence = .none }
+                            Button(FeatureL10n.text(.hostSessionPersistenceTmux)) { draft.sessionPersistence = .tmux }
+                            Button(FeatureL10n.text(.hostSessionPersistenceScreen)) { draft.sessionPersistence = .screen }
+                        }
                     }
                     if draft.sessionPersistence != .none {
                         Text(FeatureL10n.text(.hostSessionPersistenceHint))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 10)
                     }
-                    Picker(FeatureL10n.text(.hostRemoteShell), selection: $draft.remoteShell.preset) {
-                        Text(FeatureL10n.text(.hostRemoteShellLogin)).tag(RemoteShellPreset.loginShell)
-                        Text(FeatureL10n.text(.hostRemoteShellZsh)).tag(RemoteShellPreset.zsh)
-                        Text(FeatureL10n.text(.hostRemoteShellBash)).tag(RemoteShellPreset.bash)
-                        Text(FeatureL10n.text(.hostRemoteShellSh)).tag(RemoteShellPreset.sh)
-                        Text(FeatureL10n.text(.hostRemoteShellFish)).tag(RemoteShellPreset.fish)
-                        Text(FeatureL10n.text(.hostRemoteShellCustom)).tag(RemoteShellPreset.custom)
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.hostRemoteShell)) {
+                        InspectorValueMenu(title: shellTitle) {
+                            Button(FeatureL10n.text(.hostRemoteShellLogin)) { draft.remoteShell.preset = .loginShell }
+                            Button(FeatureL10n.text(.hostRemoteShellZsh)) { draft.remoteShell.preset = .zsh }
+                            Button(FeatureL10n.text(.hostRemoteShellBash)) { draft.remoteShell.preset = .bash }
+                            Button(FeatureL10n.text(.hostRemoteShellSh)) { draft.remoteShell.preset = .sh }
+                            Button(FeatureL10n.text(.hostRemoteShellFish)) { draft.remoteShell.preset = .fish }
+                            Button(FeatureL10n.text(.hostRemoteShellCustom)) { draft.remoteShell.preset = .custom }
+                        }
                     }
                     if draft.remoteShell.preset == .custom {
+                        InspectorGroupDivider()
+                        InspectorFieldRow(FeatureL10n.text(.hostRemoteShellCustomPath)) {
+                            TextField(FeatureL10n.text(.hostRemoteShellCustomPath), text: $draft.remoteShell.customPath, prompt: Text("/usr/local/bin/zsh"))
+                                .textFieldStyle(.plain)
+                                .multilineTextAlignment(.trailing)
+                                .font(.body.monospaced())
+                        }
+                    }
+                    InspectorGroupDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(FeatureL10n.text(.hostConnectCommands))
+                            .fontWeight(.medium)
                         TextField(
-                            FeatureL10n.text(.hostRemoteShellCustomPath),
-                            text: $draft.remoteShell.customPath,
-                            prompt: Text("/usr/local/bin/zsh")
+                            FeatureL10n.text(.hostConnectCommands),
+                            text: $draft.connectCommands,
+                            prompt: Text(FeatureL10n.text(.hostConnectCommandsPrompt)),
+                            axis: .vertical
                         )
+                        .textFieldStyle(.plain)
+                        .lineLimit(3...12)
                         .font(.body.monospaced())
                     }
-                    TextField(
-                        FeatureL10n.text(.hostConnectCommands),
-                        text: $draft.connectCommands,
-                        prompt: Text(FeatureL10n.text(.hostConnectCommandsPrompt)),
-                        axis: .vertical
-                    )
-                    .lineLimit(3...12)
-                    .font(.body.monospaced())
-                } header: {
-                    Text(FeatureL10n.text(.hostConnection))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                 }
-
-                Section(FeatureL10n.text(.hostsOrganization)) {
-                    AutocompleteTextField(
-                        title: "Group",
-                        text: $draft.group,
-                        suggestions: existingGroups
-                    )
-                    TagEditor(tags: tagsBinding, suggestions: existingTags)
-                    TextField(FeatureL10n.text(.hostsNotes), text: $draft.notes, prompt: Text(FeatureL10n.text(.featureHostEditorEmpty)), axis: .vertical)
-                        .lineLimit(3...8)
-                }
-            }.formStyle(.grouped)
-            if explicitImport {
-                Divider()
-                HStack {
-                    Spacer()
-                    Button(FeatureL10n.text(.actionCancel)) {
-                        hasTriggeredSave = true
-                        onClose()
-                    }
-                    .keyboardShortcut(.cancelAction)
-                    Button(FeatureL10n.text(.featureHostEditorImportHost)) {
-                        Task {
-                            if await onSave(draft) {
-                                hasTriggeredSave = true
-                                onClose()
-                            }
-                        }
-                    }
-                    .buttonStyle(.glassProminent)
-                    .tint(.blue)
-                    .keyboardShortcut(.defaultAction)
-                }
-                .padding()
-            } else if draft.id != nil, model.capabilities.externalTerminal {
-                Divider()
-                HStack {
-                    Spacer()
-                    if let host = persistedHost, !model.connectionPhase(for: host.id).isDisconnected {
-                        Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
-                            Task { await model.disconnect(host) }
-                        }
-                    }
-                    Menu {
-                        connectionDestinations
-                    } label: {
-                        Label(FeatureL10n.text(.featureHostEditorConnect), systemImage: "bolt.horizontal.fill")
-                    } primaryAction: {
-                        connect(using: .terminal)
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.glassProminent)
-                    .tint(.blue)
-                    .contextMenu {
-                        connectionDestinations
-                    }
-                    .disabled(draft.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                .padding()
             }
+
+            InspectorCollapsibleSection(FeatureL10n.text(.hostsOrganization), isExpanded: $isOrganizationExpanded) {
+                InspectorFieldGroup {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(FeatureL10n.text(.hostsGroup))
+                            .fontWeight(.medium)
+                        AutocompleteTextField(
+                            title: FeatureL10n.text(.hostsGroup),
+                            text: $draft.group,
+                            suggestions: existingGroups
+                        )
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    InspectorGroupDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(FeatureL10n.text(.hostsTags))
+                            .fontWeight(.medium)
+                        TagEditor(tags: tagsBinding, suggestions: existingTags)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    InspectorGroupDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(FeatureL10n.text(.hostsNotes))
+                            .fontWeight(.medium)
+                        TextField(FeatureL10n.text(.hostsNotes), text: $draft.notes, prompt: Text(FeatureL10n.text(.featureHostEditorEmpty)), axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .lineLimit(3...8)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+        } actions: {
+            editorActions
         }
         .onDisappear {
             guard !explicitImport && !hasTriggeredSave else { return }
@@ -165,33 +182,16 @@ struct HostEditor: View {
                 if !saved, closingDraft.id == nil { model.dismissPresentedError() }
             }
         }
-        .toolbar {
-            if !explicitImport {
-                ToolbarItem(placement: .navigation) {
-                    ControlGroup {
-                        Button(FeatureL10n.text(.actionCancel), systemImage: "xmark") {
-                            hasTriggeredSave = true
-                            onClose()
-                        }
-                        Button(FeatureL10n.text(.featureHostEditorSaveAndClose), systemImage: "checkmark") {
-                            hasTriggeredSave = true
-                            Task {
-                                _ = await onSave(draft)
-                                onClose()
-                            }
-                        }
-                    }
-                    .labelStyle(.iconOnly)
-                }
-            }
-        }
         .task {
             if model.activeIdentities.isEmpty, draft.usesIdentity {
                 draft.usesIdentity = false
                 draft.identityID = nil
+                originalDraft.usesIdentity = false
+                originalDraft.identityID = nil
             }
             guard isLoadingStoredPassword else { return }
             draft = await model.loadHostPassword(into: draft)
+            originalDraft = draft
             isLoadingStoredPassword = false
         }
     }
@@ -236,63 +236,103 @@ struct HostEditor: View {
         )
     }
 
-    @ViewBuilder
     private var manualAuthenticationFields: some View {
-        TextField(FeatureL10n.text(.hostUsername), text: $draft.username)
-            .accessibilityIdentifier("host-username")
+        VStack(spacing: 0) {
+        InspectorGroupDivider()
+        InspectorFieldRow(FeatureL10n.text(.hostUsername)) {
+            TextField(FeatureL10n.text(.hostUsername), text: $draft.username)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .accessibilityIdentifier("host-username")
+        }
         if let index = passwordIndex {
-            HStack {
-                Group {
-                    if revealPassword {
-                        TextField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
-                    } else {
-                        SecureField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
+            InspectorGroupDivider()
+            InspectorFieldRow(FeatureL10n.text(.passwordField)) {
+                HStack(spacing: 8) {
+                    Group {
+                        if revealPassword {
+                            TextField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
+                        } else {
+                            SecureField(FeatureL10n.text(.passwordField), text: passwordBinding(at: index))
+                        }
                     }
-                }
-                .disabled(isLoadingStoredPassword)
-                if isLoadingStoredPassword {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button(FeatureL10n.text(revealPassword ? .actionHide : .actionReveal), systemImage: revealPassword ? "eye.slash" : "eye") {
-                        revealPassword.toggle()
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                    .disabled(isLoadingStoredPassword)
+                    if isLoadingStoredPassword {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button(FeatureL10n.text(revealPassword ? .actionHide : .actionReveal), systemImage: revealPassword ? "eye.slash" : "eye") {
+                            revealPassword.toggle()
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
                     }
                 }
             }
         }
         ForEach(accessKeyIndices, id: \.self) { index in
             if case .accessKey(let id) = draft.authenticationMethods[index].kind {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(credential(id)?.label ?? FeatureL10n.text(.keyUnavailable))
-                        Text(credential(id)?.accessKey?.algorithm.displayName ?? FeatureL10n.text(.credentialsAccessKey))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    let position = accessKeyIndices.firstIndex(of: index) ?? 0
-                    Button(FeatureL10n.text(.hostsMoveUp), systemImage: "arrow.up") { moveAccessKey(index, by: -1) }
-                        .labelStyle(.iconOnly)
-                        .disabled(position == 0)
-                    Button(FeatureL10n.text(.hostsMoveDown), systemImage: "arrow.down") { moveAccessKey(index, by: 1) }
-                        .labelStyle(.iconOnly)
-                        .disabled(position == accessKeyIndices.count - 1)
-                    Button(FeatureL10n.text(.hostsRemove), systemImage: "minus.circle", role: .destructive) {
-                        draft.removeAuthenticationMethod(at: index)
-                    }
-                    .labelStyle(.iconOnly)
-                }
+                InspectorGroupDivider()
+                accessKeyRow(id: id, at: index)
             }
         }
+        InspectorGroupDivider()
+        accessKeyPicker
+        }
+    }
+
+    private func accessKeyRow(id: UUID, at index: Int) -> some View {
+        let position = accessKeyIndices.firstIndex(of: index) ?? 0
+        return HStack(spacing: 8) {
+            Text(credential(id)?.label ?? FeatureL10n.text(.keyUnavailable))
+                .fontWeight(.medium)
+                .lineLimit(1)
+            Text(credential(id)?.accessKey?.algorithm.displayName ?? FeatureL10n.text(.credentialsAccessKey))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Button(FeatureL10n.text(.hostsMoveUp), systemImage: "arrow.up") { moveAccessKey(index, by: -1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(position == 0)
+            Button(FeatureL10n.text(.hostsMoveDown), systemImage: "arrow.down") { moveAccessKey(index, by: 1) }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(position == accessKeyIndices.count - 1)
+            Button(FeatureL10n.text(.hostsRemove), systemImage: "xmark.circle.fill", role: .destructive) {
+                draft.removeAuthenticationMethod(at: index)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: InspectorMetrics.rowHeight)
+    }
+
+    @ViewBuilder
+    private var accessKeyPicker: some View {
         if model.activeCredentials.isEmpty {
             Text(FeatureL10n.text(.featureIdentityEditorNoAccessKeysYetCreateOneIn))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
         } else if availableAccessKeys.isEmpty {
             Text(FeatureL10n.text(.featureIdentityEditorAllAvailableAccessKeysAreAlreadyAdded))
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
         } else {
-            Menu("Add Access Key", systemImage: "key.horizontal") {
+            Menu {
                 ForEach(availableAccessKeys) { credential in
                     Button {
                         addAccessKey(credential.id)
@@ -303,7 +343,98 @@ struct HostEditor: View {
                         )
                     }
                 }
+            } label: {
+                Label(FeatureL10n.text(.hostsAddAccessKey), systemImage: "plus")
+                    .fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(.rect)
             }
+            .buttonStyle(.plain)
+            .frame(minHeight: 42)
+        }
+    }
+
+    @ViewBuilder
+    private var editorActions: some View {
+        if explicitImport {
+            InspectorActionArea {
+                InspectorTextAction(title: FeatureL10n.text(.actionCancel)) {
+                    hasTriggeredSave = true
+                    onClose()
+                }
+                .keyboardShortcut(.cancelAction)
+                InspectorProminentAction(title: FeatureL10n.text(.featureHostEditorImportHost)) {
+                    Task {
+                        if await onSave(draft) {
+                            hasTriggeredSave = true
+                            onClose()
+                        }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        } else if hasChanges || canConnect {
+            InspectorActionArea {
+                if hasChanges {
+                    InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
+                        draft = originalDraft
+                        revealPassword = false
+                    }
+                }
+                if canConnect {
+                    HStack(spacing: 8) {
+                        InspectorProminentAction(title: connectTitle, disabled: !canConnectNow) {
+                            connect(using: .terminal)
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        InspectorCircleMenu(disabled: !canConnectNow) {
+                            if let host = persistedHost, !model.connectionPhase(for: host.id).isDisconnected {
+                                Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
+                                    Task { await model.disconnect(host) }
+                                }
+                                Divider()
+                            }
+                            connectionDestinations
+                        }
+                        .accessibilityLabel(FeatureL10n.text(.hostsConnectWith))
+                    }
+                }
+            }
+        }
+    }
+
+    private var editorTitle: String {
+        draft.id == nil ? FeatureL10n.text(.hostsAddHost) : FeatureL10n.text(.featureHostEditorEdit)
+    }
+
+    private var connectTitle: String {
+        hasChanges ? FeatureL10n.text(.featureHostEditorSaveAndConnect) : FeatureL10n.text(.featureHostEditorConnect)
+    }
+
+    private var authenticationTitle: String {
+        if draft.usesIdentity, let id = draft.identityID,
+           let identity = model.activeIdentities.first(where: { $0.id == id }) {
+            return identity.name
+        }
+        return FeatureL10n.text(.hostAuthenticationManual)
+    }
+
+    private var sessionTitle: String {
+        switch draft.sessionPersistence {
+        case .none: FeatureL10n.text(.hostSessionPersistenceNone)
+        case .tmux: FeatureL10n.text(.hostSessionPersistenceTmux)
+        case .screen: FeatureL10n.text(.hostSessionPersistenceScreen)
+        }
+    }
+
+    private var shellTitle: String {
+        switch draft.remoteShell.preset {
+        case .loginShell: FeatureL10n.text(.hostRemoteShellLogin)
+        case .zsh: FeatureL10n.text(.hostRemoteShellZsh)
+        case .bash: FeatureL10n.text(.hostRemoteShellBash)
+        case .sh: FeatureL10n.text(.hostRemoteShellSh)
+        case .fish: FeatureL10n.text(.hostRemoteShellFish)
+        case .custom: FeatureL10n.text(.hostRemoteShellCustom)
         }
     }
 
@@ -372,11 +503,20 @@ struct HostEditor: View {
         }
     }
 
+    private var hasChanges: Bool { draft != originalDraft }
+
+    private var canConnect: Bool { draft.id != nil && model.capabilities.externalTerminal }
+
+    private var canConnectNow: Bool {
+        !draft.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private func connect(using terminal: TerminalApplication) {
         Task {
             guard await onSave(draft),
                   let hostID = draft.id,
                   let host = model.hosts.first(where: { $0.id == hostID }) else { return }
+            originalDraft = draft
             await model.connect(host, with: terminal)
         }
     }

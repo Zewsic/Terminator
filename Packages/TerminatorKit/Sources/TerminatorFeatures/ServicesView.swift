@@ -25,7 +25,7 @@ struct ServicesView: View {
                     description: Text("Discovered services will appear here.")
                 )
             } else {
-                InspectorLayout {
+                InspectorLayout(content: {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(filteredServices) { service in
@@ -60,13 +60,13 @@ struct ServicesView: View {
                         }
                         .padding(.vertical, 8)
                     }
-                } inspector: {
+                }, inspector: {
                     if let service = model.containers.first(where: { $0.id == selectedServiceID }) {
                         ServiceInspector(service: service)
                     }
-                } onContentInteraction: {
+                }, inspectorWidth: InspectorMetrics.compactWidth, onContentInteraction: {
                     selectedServiceID = nil
-                }
+                })
             }
         }
         .navigationTitle("Services")
@@ -96,20 +96,28 @@ struct ServicesView: View {
 
 private struct ServiceInspector: View {
     let service: ContainerSummary
+    @State private var isDetailsExpanded = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(service.name).font(.title2.weight(.semibold))
-                Spacer()
+        InspectorScreen(title: service.name) {
+            InspectorCollapsibleSection(
+                FeatureL10n.text(.inspectorServiceDetails),
+                isExpanded: $isDetailsExpanded
+            ) {
+                InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.featureContainersImage)) {
+                        InspectorReadOnlyValue(value: service.image)
+                    }
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.featureContainersState)) {
+                        InspectorReadOnlyValue(value: service.state)
+                    }
+                    InspectorGroupDivider()
+                    InspectorFieldRow(FeatureL10n.text(.connectionEndpoint)) {
+                        InspectorReadOnlyValue(value: service.endpointName)
+                    }
+                }
             }
-            .padding()
-            Form {
-                LabeledContent(FeatureL10n.text(.featureContainersImage), value: service.image)
-                LabeledContent(FeatureL10n.text(.featureContainersState), value: service.state)
-                LabeledContent(FeatureL10n.text(.connectionEndpoint), value: service.endpointName)
-            }
-            .formStyle(.grouped)
         }
     }
 }

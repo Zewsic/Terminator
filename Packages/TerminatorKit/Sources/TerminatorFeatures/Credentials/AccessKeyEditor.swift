@@ -12,6 +12,7 @@ struct AccessKeyEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(TerminatorAppModel.self) private var model
     @State private var draft: AccessKeyDraft
+    @State private var originalDraft: AccessKeyDraft
     @State private var generationType = 0
     @State private var curve: ECDSACurve = .p256
     @State private var rsaBits = 2_048
@@ -20,6 +21,10 @@ struct AccessKeyEditor: View {
     @State private var isImportingPublicKey = false
     @State private var hasTriggeredSave = false
     @State private var isExportToHostPresented = false
+    @State private var isConfigurationExpanded = true
+    @State private var isPrivateKeyExpanded = true
+    @State private var isPublicKeyExpanded = true
+    @State private var isSecurityExpanded = true
     let onSave: @MainActor (AccessKeyDraft) async -> Void
     let inline: Bool
     let explicitImport: Bool
@@ -37,6 +42,7 @@ struct AccessKeyEditor: View {
         onClose: (() -> Void)? = nil
     ) {
         _draft = State(initialValue: draft)
+        _originalDraft = State(initialValue: draft)
         self.onSave = onSave
         self.inline = inline
         self.explicitImport = explicitImport
@@ -62,6 +68,7 @@ struct AccessKeyEditor: View {
         value.originalAlgorithm = credential.accessKey?.algorithm
         value.acceptLegacyRSA1024 = credential.accessKey?.compatibility == .legacyRSA1024
         _draft = State(initialValue: value)
+        _originalDraft = State(initialValue: value)
         self.onSave = onSave
         self.inline = inline
         self.explicitImport = explicitImport
@@ -71,178 +78,252 @@ struct AccessKeyEditor: View {
     }
 
     var body: some View {
-        editorShell(
-            title: title,
-            width: inline ? nil : 600,
-            height: inline ? nil : 680,
-            saveTitle: explicitImport ? "Import Key" : "Save",
-            autoSave: inline && !explicitImport,
-            trailingActions: explicitImport
-        ) {
-            VStack(spacing: 0) {
-                if draft.credentialID == nil {
-                    Picker("", selection: $draft.mode) {
-                        Text(FeatureL10n.text(.actionImport)).tag(AccessKeyDraftMode.importExisting)
-                        Text(FeatureL10n.text(.credentialsGenerate)).tag(AccessKeyDraftMode.generateSoftware)
-                        Text(FeatureL10n.text(.credentialsSecureEnclave)).tag(AccessKeyDraftMode.generateSecureEnclave)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal)
-                    .padding(.vertical, 12)
-                }
-                Form {
-                Section {
+        InspectorScreen(title: title) {
+            if isCreatingAccessKey {
+                InspectorSegmentedSelector(
+                    selection: $draft.mode,
+                    options: [
+                        .init(value: .importExisting, title: FeatureL10n.text(.actionImport)),
+                        .init(value: .generateSoftware, title: FeatureL10n.text(.credentialsGenerate)),
+                        .init(value: .generateSecureEnclave, title: FeatureL10n.text(.credentialsSecureEnclave)),
+                    ],
+                    fillsWidth: true
+                )
+            }
+
+            InspectorFieldGroup {
+                InspectorFieldRow(FeatureL10n.text(.uiField6)) {
                     TextField(FeatureL10n.text(.uiField6), text: $draft.label)
-                    if draft.mode == .generateSoftware {
-                        Picker(FeatureL10n.text(.rootAlgorithm), selection: $generationType) {
-                            Text(FeatureL10n.text(.credentialsEd25519)).tag(0)
-                            Text(FeatureL10n.text(.credentialsEcdsa)).tag(1)
-                            Text(FeatureL10n.text(.credentialsRsa)).tag(2)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+
+            if draft.mode == .generateSoftware {
+                InspectorCollapsibleSection(
+                    FeatureL10n.text(.keyEditorConfiguration),
+                    isExpanded: $isConfigurationExpanded
+                ) {
+                    InspectorFieldGroup {
+                        InspectorFieldRow(FeatureL10n.text(.rootAlgorithm)) {
+                            InspectorSegmentedSelector(
+                                selection: $generationType,
+                                options: [
+                                    .init(value: 0, title: FeatureL10n.text(.credentialsEd25519)),
+                                    .init(value: 1, title: FeatureL10n.text(.credentialsEcdsa)),
+                                    .init(value: 2, title: FeatureL10n.text(.credentialsRsa)),
+                                ],
+                                style: .chips
+                            )
+                            .onChange(of: generationType) { _, _ in updateGeneration() }
                         }
-                        .onChange(of: generationType) { _, _ in updateGeneration() }
                         if generationType == 1 {
-                            Picker(FeatureL10n.text(.credentialsCurve), selection: $curve) {
-                                ForEach(ECDSACurve.allCases, id: \.self) { Text($0.displayName).tag($0) }
-                            }.onChange(of: curve) { _, _ in updateGeneration() }
+                            InspectorGroupDivider()
+                            InspectorFieldRow(FeatureL10n.text(.credentialsCurve)) {
+                                InspectorSegmentedSelector(
+                                    selection: $curve,
+                                    options: ECDSACurve.allCases.map {
+                                        .init(value: $0, title: $0.displayName)
+                                    },
+                                    style: .chips
+                                )
+                                .onChange(of: curve) { _, _ in updateGeneration() }
+                            }
                         } else if generationType == 2 {
-                            Picker(FeatureL10n.text(.credentialsBits), selection: $rsaBits) {
-                                Text(FeatureL10n.text(.credentials2048)).tag(2_048)
-                                Text(FeatureL10n.text(.credentials4096)).tag(4_096)
-                            }.onChange(of: rsaBits) { _, _ in updateGeneration() }
+                            InspectorGroupDivider()
+                            InspectorFieldRow(FeatureL10n.text(.credentialsBits)) {
+                                InspectorSegmentedSelector(
+                                    selection: $rsaBits,
+                                    options: [
+                                        .init(value: 2_048, title: FeatureL10n.text(.credentials2048)),
+                                        .init(value: 4_096, title: FeatureL10n.text(.credentials4096)),
+                                    ],
+                                    style: .chips
+                                )
+                                .onChange(of: rsaBits) { _, _ in updateGeneration() }
+                            }
                         }
-                        TextField(FeatureL10n.text(.uiField2), text: $draft.comment)
+                        InspectorGroupDivider()
+                        InspectorFieldRow(FeatureL10n.text(.uiField2)) {
+                            TextField(FeatureL10n.text(.uiField2), text: $draft.comment)
+                                .textFieldStyle(.plain)
+                                .multilineTextAlignment(.trailing)
+                        }
                     }
                 }
-                if draft.mode == .importExisting {
-                    Section {
+            }
+
+            if draft.mode == .importExisting {
+                InspectorCollapsibleSection(
+                    FeatureL10n.text(.credentialsPrivateKey),
+                    isExpanded: $isPrivateKeyExpanded
+                ) {
+                    InspectorFieldGroup {
                         if draft.privateKey.isEmpty, let credentialID = draft.credentialID {
-                            HStack {
-                                Text(FeatureL10n.text(.featureAccessKeyEditorPrivateKeyIsLocked))
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Button(FeatureL10n.text(.featureAccessKeyEditorUnlock), systemImage: "lock.open") {
-                                    Task {
-                                        if let value = await model.accessKeyDraft(
-                                            id: credentialID
-                                        ) { draft = value }
+                            Button {
+                                Task { await loadStoredDraft(id: credentialID) }
+                            } label: {
+                                VStack(spacing: 7) {
+                                    Image(systemName: "lock.fill")
+                                        .font(.title2)
+                                        .foregroundStyle(.secondary)
+                                    Text(FeatureL10n.text(.featureAccessKeyEditorPrivateKeyLocked))
+                                        .font(.headline)
+                                    Text(FeatureL10n.text(.featureAccessKeyEditorClickToUnblock))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 126)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            TextEditor(text: $draft.privateKey)
+                                .font(.system(.body, design: .monospaced))
+                                .scrollContentBackground(.hidden)
+                                .padding(10)
+                                .frame(height: 170)
+                        }
+                        if draft.requiresUnlock {
+                            InspectorGroupDivider()
+                            Button(FeatureL10n.text(.featureAccessKeyEditorUnlock), systemImage: "lock.open") {
+                                Task { await unlockStoredDraft() }
+                            }
+                            .disabled(draft.passphrase.isEmpty)
+                            .frame(maxWidth: .infinity)
+                            .padding(12)
+                        }
+                    }
+                }
+
+                InspectorCollapsibleSection(
+                    FeatureL10n.text(.credentialsPublicKey),
+                    isExpanded: $isPublicKeyExpanded
+                ) {
+                    InspectorFieldGroup {
+                        TextEditor(text: $draft.publicKey)
+                            .font(.system(.body, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .padding(10)
+                            .frame(height: 68)
+                    }
+                }
+            }
+
+            if draft.mode == .generateSecureEnclave, !draft.publicKey.isEmpty {
+                InspectorCollapsibleSection(
+                    FeatureL10n.text(.credentialsPublicKey),
+                    isExpanded: $isPublicKeyExpanded
+                ) {
+                    InspectorFieldGroup {
+                        HStack(spacing: 12) {
+                            Text(draft.publicKey)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            Button(
+                                FeatureL10n.text(.credentialsCopyPublicKey),
+                                systemImage: "doc.on.doc"
+                            ) {
+                                copyToPasteboard(draft.publicKey)
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                            .help(FeatureL10n.text(.credentialsCopyPublicKey))
+                        }
+                        .padding(12)
+                        .frame(minHeight: 64)
+                    }
+                }
+            }
+
+            if draft.mode == .generateSecureEnclave {
+                VStack(spacing: 9) {
+                    Image(systemName: "touchid")
+                        .font(.system(size: 38, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Text(FeatureL10n.text(.keySecureEnclaveTitle))
+                        .font(.title3.weight(.semibold))
+                    Text(FeatureL10n.text(.keySecureEnclaveDescription))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 8)
+            } else {
+                InspectorCollapsibleSection(
+                    FeatureL10n.text(.featureAccessKeyEditorSecurity),
+                    isExpanded: $isSecurityExpanded
+                ) {
+                    VStack(spacing: 8) {
+                        InspectorFieldGroup {
+                            InspectorFieldRow(FeatureL10n.text(.uiField3)) {
+                                HStack(spacing: 8) {
+                                    if isPassphraseLocked {
+                                        Spacer(minLength: 0)
+                                        Image(systemName: "lock.fill")
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Group {
+                                            if revealPassphrase {
+                                                TextField(FeatureL10n.text(.uiField3), text: $draft.passphrase)
+                                            } else {
+                                                SecureField(FeatureL10n.text(.uiField3), text: $draft.passphrase)
+                                            }
+                                        }
+                                        .textFieldStyle(.plain)
+                                        .multilineTextAlignment(.trailing)
+
+                                        Button(
+                                            FeatureL10n.text(revealPassphrase ? .actionHide : .actionReveal),
+                                            systemImage: revealPassphrase ? "eye.slash" : "eye"
+                                        ) {
+                                            revealPassphrase.toggle()
+                                        }
+                                        .labelStyle(.iconOnly)
+                                        .buttonStyle(.plain)
+                                        .foregroundStyle(.secondary)
                                     }
                                 }
                             }
-                        }
-                        TextEditor(text: $draft.privateKey)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 170, idealHeight: 170, maxHeight: 170)
-                            .disabled(draft.privateKey.isEmpty && draft.credentialID != nil)
-                        if draft.requiresUnlock {
-                            Button(FeatureL10n.text(.featureAccessKeyEditorUnlock), systemImage: "lock.open") {
-                                Task {
-                                    if let value = await model.accessKeyDraft(
-                                        id: draft.credentialID ?? UUID(),
-                                        unlockingWith: draft.passphrase
-                                    ) { draft = value }
+
+                            if !isPassphraseLocked && !draft.passphrase.isEmpty {
+                                InspectorGroupDivider()
+                                InspectorFieldRow(FeatureL10n.text(.credentialsRequireTouchIdForConnections)) {
+                                    Toggle("", isOn: $draft.savePassphrase)
+                                        .labelsHidden()
+                                        .toggleStyle(.switch)
+                                        .tint(.blue)
+                                        .fixedSize()
                                 }
                             }
-                            .disabled(draft.passphrase.isEmpty)
                         }
-                    } header: {
-                        Text(FeatureL10n.text(.credentialsPrivateKey))
+                        Text(securityDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    Section {
-                        TextEditor(text: $draft.publicKey)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 80)
-                    } header: {
-                        Text(FeatureL10n.text(.credentialsPublicKey))
-                    }
-                }
-                if draft.mode == .generateSecureEnclave, !draft.publicKey.isEmpty {
-                    Section {
-                        Text(draft.publicKey)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                        Button(FeatureL10n.text(.credentialsCopyPublicKey), systemImage: "doc.on.doc") {
-                            copyToPasteboard(draft.publicKey)
-                        }
-                    } header: {
-                        Text(FeatureL10n.text(.credentialsPublicKey))
-                    }
-                }
-                if draft.mode != .generateSecureEnclave {
-                    Section {
-                        HStack {
-                            Group {
-                                if revealPassphrase {
-                                    TextField(FeatureL10n.text(.uiField3), text: $draft.passphrase)
-                                } else {
-                                    SecureField(FeatureL10n.text(.uiField3), text: $draft.passphrase)
-                                }
-                            }
-                            .disabled(isPrivateKeyLocked)
-                            if isPrivateKeyLocked {
-                                Text(FeatureL10n.text(.featureAccessKeyEditorUnlockPrivateKeyFirst))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                Button(FeatureL10n.text(revealPassphrase ? .actionHide : .actionReveal), systemImage: revealPassphrase ? "eye.slash" : "eye") {
-                                    revealPassphrase.toggle()
-                                }
-                                .labelStyle(.iconOnly)
-                            }
-                        }
-                        if !isPrivateKeyLocked && !draft.passphrase.isEmpty {
-                            Toggle(FeatureL10n.text(.credentialsRequireTouchIdForConnections), isOn: $draft.savePassphrase)
-                        }
-                    } header: {
-                        Text(FeatureL10n.text(.featureAccessKeyEditorSecurity))
-                    } footer: {
-                        Text(isPrivateKeyLocked ? FeatureL10n.text(.featureAccessKeyEditorUnlockPrivateKeyFirst) : passphraseStorageDescription)
-                    }
-                } else {
-                    Section {
-                        Label(FeatureL10n.text(.credentialsEcdsaP256PrivateKeyCannotBe), systemImage: "touchid")
-                    } header: {
-                        Text(FeatureL10n.text(.featureAccessKeyEditorSecurity))
-                    } footer: {
-                        Text(FeatureL10n.text(.credentialsEachSignatureIsAuthorizedByTouchId))
-                    }
-                }
-                Section {
-                    TextField(FeatureL10n.text(.uiField5), text: .constant(""))
-                        .disabled(true)
-                } header: {
-                    Text(FeatureL10n.text(.credentialsCertificate))
-                } footer: {
-                    Text(FeatureL10n.text(.credentialsAnSshCertificateIsAPublicCa))
-                }
-                }
-                .formStyle(.grouped)
-                if inline, draft.credentialID != nil, !explicitImport {
-                    Divider()
-                    HStack {
-                        Spacer()
-                        Button(FeatureL10n.text(.featureAccessKeyEditorExportToHost), systemImage: "server.rack") {
-                            isExportToHostPresented = true
-                        }
-                    }
-                    .padding()
                 }
             }
-        } save: {
-            hasTriggeredSave = true
-            draft.passphraseConfirmation = draft.passphrase
-            updateGeneration()
-            await onSave(draft)
-        } cancel: {
-            hasTriggeredSave = true
-            close()
+
+        } actions: {
+            editorActions
         }
+        .frame(width: inline ? nil : InspectorMetrics.compactWidth, height: inline ? nil : 680)
         .onDisappear {
-            guard inline && !explicitImport && !hasTriggeredSave && !isDiscarding() else { return }
-            Task { await onSave(draft) }
+            guard inline && !explicitImport && !isCreatingAccessKey && hasChanges,
+                  !hasTriggeredSave && !isDiscarding() else { return }
+            saveDraft()
         }
         .onChange(of: draft) { _, value in onDraftChange?(value) }
+        .onAppear { syncGenerationControls(with: draft.generation) }
         .alert(FeatureL10n.text(.featureAccessKeyEditorUnableToSaveAccessKey), isPresented: Binding(
             get: { model.presentedError != nil },
             set: { if !$0 { model.dismissPresentedError() } }
@@ -292,6 +373,52 @@ struct AccessKeyEditor: View {
         draft.credentialID != nil && draft.mode == .importExisting && draft.privateKey.isEmpty
     }
 
+    private var isPassphraseLocked: Bool { isPrivateKeyLocked && !draft.requiresUnlock }
+
+    private var isCreatingAccessKey: Bool { originalDraft.credentialID == nil }
+    private var hasChanges: Bool { draft != originalDraft }
+
+    @ViewBuilder
+    private var editorActions: some View {
+        if explicitImport {
+            InspectorActionArea {
+                InspectorProminentAction(title: FeatureL10n.text(.keyEditorImport)) {
+                    submitDraft()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        } else if isCreatingAccessKey {
+            InspectorActionArea {
+                InspectorProminentAction(title: title) {
+                    submitDraft()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        } else if inline, draft.credentialID != nil {
+            InspectorActionArea {
+                if hasChanges {
+                    InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
+                        draft = originalDraft
+                        revealPassphrase = false
+                        syncGenerationControls(with: originalDraft.generation)
+                    }
+                }
+                InspectorProminentAction(title: FeatureL10n.text(.featureAccessKeyEditorExportToHost)) {
+                    isExportToHostPresented = true
+                }
+            }
+        }
+    }
+
+    private var securityDescription: String {
+        if draft.mode == .generateSecureEnclave {
+            return FeatureL10n.text(.credentialsEachSignatureIsAuthorizedByTouchId)
+        }
+        return isPrivateKeyLocked
+            ? FeatureL10n.text(.featureAccessKeyEditorUnlockPrivateKeyFirst)
+            : passphraseStorageDescription
+    }
+
     private var passphraseStorageDescription: String {
         if draft.passphrase.isEmpty {
             return FeatureL10n.text(.keyPassphrasePromptDescription)
@@ -308,6 +435,47 @@ struct AccessKeyEditor: View {
         case 2: draft.generation = .rsa(bitCount: rsaBits)
         default: draft.generation = .ed25519
         }
+    }
+
+    private func syncGenerationControls(with generation: SoftwareKeyGeneration) {
+        switch generation {
+        case .ed25519:
+            generationType = 0
+        case .ecdsa(let value):
+            generationType = 1
+            curve = value
+        case .rsa(let bitCount):
+            generationType = 2
+            rsaBits = bitCount
+        }
+    }
+
+    private func submitDraft() {
+        hasTriggeredSave = true
+        saveDraft()
+    }
+
+    private func saveDraft() {
+        var value = draft
+        value.passphraseConfirmation = value.passphrase
+        Task { await onSave(value) }
+    }
+
+    private func loadStoredDraft(id: UUID) async {
+        guard let value = await model.accessKeyDraft(id: id) else { return }
+        draft = value
+        originalDraft = value
+        syncGenerationControls(with: value.generation)
+    }
+
+    private func unlockStoredDraft() async {
+        guard let value = await model.accessKeyDraft(
+            id: draft.credentialID ?? UUID(),
+            unlockingWith: draft.passphrase
+        ) else { return }
+        draft = value
+        originalDraft = value
+        syncGenerationControls(with: value.generation)
     }
 
     private func loadDroppedText(_ url: URL?, into keyPath: WritableKeyPath<AccessKeyDraft, String>) -> Bool {

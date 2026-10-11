@@ -11,7 +11,7 @@ import UIKit
 @MainActor
 @ViewBuilder
 func editorShell<Content: View>(
-    title: String,
+    title: String?,
     width: CGFloat?,
     height: CGFloat?,
     saveTitle: String = "Save",
@@ -22,11 +22,13 @@ func editorShell<Content: View>(
     cancel: @escaping () -> Void
 ) -> some View {
     VStack(spacing: 0) {
-        HStack {
-            Text(title).font(.title2).fontWeight(.semibold)
-            Spacer()
+        if let title {
+            HStack {
+                Text(title).font(.title2).fontWeight(.semibold)
+                Spacer()
+            }
+            .padding()
         }
-        .padding()
         content()
         if !autoSave {
             Divider()

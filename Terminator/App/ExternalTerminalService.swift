@@ -19,7 +19,7 @@ actor MacExternalTerminalService: ExternalTerminalConnecting {
         }
     }
 
-    func connect(host: HostProfile, terminal: TerminalApplication) async throws {
+    func connect(host: HostProfile, terminal: TerminalApplication) async throws -> DetectedHostOS? {
         try await client.connect(host: host, terminal: terminal)
     }
 
@@ -37,6 +37,10 @@ actor MacExternalTerminalService: ExternalTerminalConnecting {
 
     func disconnect(hostID: UUID) async {
         await client.disconnect(hostID: hostID)
+    }
+
+    func exec(host: HostProfile, command: String) async throws -> SSHExecResult {
+        try await client.exec(host: host, command: command)
     }
 }
 

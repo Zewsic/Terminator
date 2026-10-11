@@ -26,6 +26,7 @@ struct AutocompleteTextField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             TextField(title, text: $text)
+                .textFieldStyle(.plain)
                 .focused($isFocused)
             if isFocused, !matches.isEmpty {
                 HStack(spacing: 6) {
@@ -80,6 +81,7 @@ struct TagEditor: View {
                 .scrollIndicators(.hidden)
             }
             TextField(FeatureL10n.text(.featureCatalogFormControlsTag), text: $input)
+                .textFieldStyle(.plain)
                 .focused($isFocused)
                 .onSubmit { commitInput() }
             if isFocused, !matches.isEmpty {

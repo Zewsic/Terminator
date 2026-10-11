@@ -69,6 +69,10 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
     var prepareTasks: [UUID: Task<Void, Error>] = [:]
     var retainedHosts: Set<UUID> = []
     var stateContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
+    let forwardRouter = TunnelForwardRouter()
+    var desiredTunnels: [UUID: TunnelProfile] = [:]
+    var runningTunnels: [UUID: RunningTunnel] = [:]
+    var tunnelPhaseHandler: (@Sendable (UUID, SSHConnectionPhase) -> Void)?
 
     public init(
         authenticationResolver: any AuthenticationResolving,
@@ -132,13 +136,17 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         let closeBridge = TransportCloseBridge { [weak self] error in
             Task { await self?.transportClosed(hostID: host.id, error: error) }
         }
+        let router = forwardRouter
+        let connectedHostID = host.id
         let bootstrap = ClientBootstrap(group: group)
             .channelInitializer { channel in
                 channel.eventLoop.makeCompletedFuture {
                     let ssh = NIOSSHHandler(
                         role: .client(.init(userAuthDelegate: authDelegate, serverAuthDelegate: hostDelegate)),
                         allocator: channel.allocator,
-                        inboundChildChannelInitializer: nil
+                        inboundChildChannelInitializer: { child, type in
+                            router.accept(hostID: connectedHostID, channel: child, type: type)
+                        }
                     )
                     try channel.pipeline.syncOperations.addHandler(ssh)
                     try channel.pipeline.syncOperations.addHandler(authenticationResult)

@@ -12,6 +12,7 @@ extension NIOSSHConnectionCoordinator {
     func transportClosed(hostID: UUID, error: Error?) async {
         guard let pool = pools[hostID], !pool.intentionalClose else { return }
         pools[hostID] = nil
+        await suspendTunnels(touching: hostID)
         guard retainedHosts.contains(hostID) else {
             setPhase(.disconnected, for: hostID)
             return
@@ -43,6 +44,7 @@ extension NIOSSHConnectionCoordinator {
                     session.continuation.yield(.status("\r\n[Terminator: Reconnected]\r\n"))
                 }
                 setPhase(.connected, for: host.id)
+                await resumeTunnels(touching: host.id)
                 reconnectTasks[host.id] = nil
                 return
             } catch {

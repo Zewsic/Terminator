@@ -1,10 +1,11 @@
 import Foundation
 import TerminatorCore
 
-public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository {
+public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository, TunnelRepository {
     private var hosts: [UUID: HostProfile]
     private var credentials: [UUID: CredentialMetadata]
     private var identities: [UUID: IdentityProfile]
+    private var tunnels: [UUID: TunnelProfile]
     private var history: [HistoryEntry]
     private var knownHosts: [String: KnownHostKey]
     private var sessionLogs: [UUID: SessionLogMetadata]
@@ -20,6 +21,7 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         sessionLogs: [SessionLogMetadata] = []
     ) {
         self.hosts = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
+        self.tunnels = [:]
         self.credentials = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
         self.identities = Dictionary(uniqueKeysWithValues: identities.map { ($0.id, $0) })
         self.history = history
@@ -123,7 +125,17 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         case .host:
             let before = hosts[change.entityID]
             if let snapshot = change.beforeSnapshot {
-                hosts[change.entityID] = try decoder.decode(HostProfile.self, from: snapshot)
+                var target = try decoder.decode(HostProfile.self, from: snapshot)
+                if case .manual(let username, let targetMethods) = target.authentication {
+                    target.authentication = .manual(
+                        username: username,
+                        authenticationMethods: preservingCurrentPassword(
+                            in: targetMethods,
+                            currentMethods: before?.authentication.authenticationMethods ?? []
+                        )
+                    )
+                }
+                hosts[change.entityID] = target
             } else if var current = before {
                 current.deletedAt = .now
                 hosts[change.entityID] = current
@@ -141,13 +153,50 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         case .identity:
             let before = identities[change.entityID]
             if let snapshot = change.beforeSnapshot {
-                identities[change.entityID] = try decoder.decode(IdentityProfile.self, from: snapshot)
+                var target = try decoder.decode(IdentityProfile.self, from: snapshot)
+                target.authenticationMethods = preservingCurrentPassword(
+                    in: target.authenticationMethods,
+                    currentMethods: before?.authenticationMethods ?? []
+                )
+                identities[change.entityID] = target
             } else if var current = before {
                 current.deletedAt = .now
                 identities[change.entityID] = current
             }
             history.append(try entry(entity: .identity, id: change.entityID, operation: .restored, before: before, after: identities[change.entityID]))
+        case .tunnel:
+            let before = tunnels[change.entityID]
+            if let snapshot = change.beforeSnapshot {
+                tunnels[change.entityID] = try decoder.decode(TunnelProfile.self, from: snapshot)
+            } else if var current = before {
+                current.deletedAt = .now
+                tunnels[change.entityID] = current
+            }
+            history.append(try entry(entity: .tunnel, id: change.entityID, operation: .restored, before: before, after: tunnels[change.entityID]))
         }
+    }
+
+    public func listTunnels(includeDeleted: Bool) -> [TunnelProfile] {
+        tunnels.values
+            .filter { includeDeleted || !$0.isDeleted }
+            .sorted { $0.displayName < $1.displayName }
+    }
+
+    public func tunnel(id: UUID) -> TunnelProfile? { tunnels[id] }
+
+    public func saveTunnel(_ tunnel: TunnelProfile) throws {
+        let tunnel = try tunnel.validated()
+        let before = tunnels[tunnel.id]
+        tunnels[tunnel.id] = tunnel
+        history.append(try entry(entity: .tunnel, id: tunnel.id, operation: before == nil ? .created : .updated, before: before, after: tunnel))
+    }
+
+    public func deleteTunnel(id: UUID) throws {
+        guard let before = tunnels[id] else { return }
+        var after = before
+        after.deletedAt = .now
+        tunnels[id] = after
+        history.append(try entry(entity: .tunnel, id: id, operation: .deleted, before: before, after: after))
     }
 
     public func knownHosts(endpoint: String) -> [KnownHostKey] {
@@ -183,6 +232,19 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
             beforeSnapshot: try before.map(encoder.encode),
             afterSnapshot: try after.map(encoder.encode)
         )
+    }
+
+    private func preservingCurrentPassword(
+        in historicalMethods: [AuthenticationMethod],
+        currentMethods: [AuthenticationMethod]
+    ) -> [AuthenticationMethod] {
+        var methods = historicalMethods.filter { $0.passwordSecretID == nil }
+        guard let currentPassword = currentMethods.first(where: { $0.passwordSecretID != nil }) else {
+            return methods
+        }
+        let historicalIndex = historicalMethods.firstIndex(where: { $0.passwordSecretID != nil }) ?? 0
+        methods.insert(currentPassword, at: min(historicalIndex, methods.count))
+        return methods
     }
 
     private static func knownHostKey(_ endpoint: String, _ algorithm: String) -> String {

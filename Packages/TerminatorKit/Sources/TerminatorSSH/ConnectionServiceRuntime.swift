@@ -95,8 +95,8 @@ public actor ConnectionServiceRuntime {
         case .connect(let hostID, let terminal):
             await prompting.bind(hostID: hostID)
             do {
-                try await connect(hostID: hostID, terminal: terminal)
-                write(.response(id: id, .ok), to: channel)
+                let detectedOS = try await connect(hostID: hostID, terminal: terminal)
+                write(.response(id: id, .connected(detectedOS: detectedOS)), to: channel)
             } catch {
                 write(.response(id: id, .failed(error.localizedDescription)), to: channel)
             }
@@ -156,6 +156,63 @@ public actor ConnectionServiceRuntime {
             } catch {
                 write(.response(id: id, .failed(error.localizedDescription)), to: channel)
             }
+        case .exec(let hostID, let command):
+            do {
+                let result = try await exec(hostID: hostID, command: command)
+                write(
+                    .response(id: id, .exec(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)),
+                    to: channel
+                )
+            } catch {
+                write(.response(id: id, .failed(error.localizedDescription)), to: channel)
+            }
+        case .startTunnel(let tunnel):
+            do {
+                try await startTunnel(tunnel)
+                write(.response(id: id, .ok), to: channel)
+            } catch {
+                write(.response(id: id, .failed(error.localizedDescription)), to: channel)
+            }
+        case .stopTunnel(let tunnelID):
+            await coordinator.stopForward(id: tunnelID)
+            write(.response(id: id, .ok), to: channel)
+        }
+    }
+
+    public func publishTunnelPhase(id: UUID, phase: SSHConnectionPhase) {
+        broadcast(.tunnelPhase(TunnelPhaseEvent(id: id, phase: phase)))
+    }
+
+    private func startTunnel(_ tunnel: TunnelProfile) async throws {
+        let tunnel = try tunnel.validated()
+        try await prepareTunnelEndpoint(tunnel.source)
+        try await prepareTunnelEndpoint(tunnel.destination)
+        try await coordinator.startForward(tunnel)
+    }
+
+    private func prepareTunnelEndpoint(_ endpoint: TunnelEndpoint) async throws {
+        switch endpoint {
+        case .thisMac:
+            return
+        case .saved(let id):
+            guard let host = try await hostRepository.host(id: id), !host.isDeleted else {
+                throw ConnectionServiceError.hostNotFound
+            }
+            await prompting.bind(hostID: id)
+            if publishing.insert(id).inserted {
+                Task { await publishStates(hostID: id) }
+            }
+            try await coordinator.prepare(host: host, prompting: prompting)
+        case .manual(let id, let hostname, let port):
+            let host = HostProfile(
+                id: id,
+                displayName: hostname,
+                hostname: hostname,
+                port: port,
+                authentication: .manual(username: "", authenticationMethods: [])
+            )
+            await prompting.bind(hostID: id)
+            try await coordinator.prepare(host: host, prompting: prompting)
         }
     }
 
@@ -182,7 +239,7 @@ public actor ConnectionServiceRuntime {
         promptWaiters.removeValue(forKey: id)
     }
 
-    private func connect(hostID: UUID, terminal: TerminalApplication) async throws {
+    private func connect(hostID: UUID, terminal: TerminalApplication) async throws -> DetectedHostOS? {
         guard let host = try await hostRepository.host(id: hostID), !host.isDeleted else {
             throw ConnectionServiceError.hostNotFound
         }
@@ -190,11 +247,13 @@ public actor ConnectionServiceRuntime {
             Task { await publishStates(hostID: hostID) }
         }
         try await coordinator.prepare(host: host, prompting: prompting)
+        let detectedOS = await probeOperatingSystem(host)
         let descriptor = try await broker.createDescriptor(host: host, terminal: terminal)
         do {
             let helper = try terminalLauncher.attachHelperURL()
             let command = await broker.command(for: descriptor, helperURL: helper)
             try await terminalLauncher.launch(terminal: terminal, command: command, descriptor: descriptor)
+            return detectedOS
         } catch {
             await broker.cancel(descriptor)
             throw error
@@ -235,6 +294,53 @@ public actor ConnectionServiceRuntime {
                 kind: headless[session.id] == nil ? "terminal" : "headless"
             )
         }
+    }
+
+    private func probeOperatingSystem(_ host: HostProfile) async -> DetectedHostOS? {
+        func log(_ message: String) {
+            let url = ConnectionServicePaths.applicationSupport.appending(path: "os-probe.log")
+            let line = "\(ISO8601DateFormatter().string(from: .now)) \(host.displayName): \(message)\n"
+            guard let data = line.data(using: .utf8) else { return }
+            if FileManager.default.fileExists(atPath: url.path), let handle = try? FileHandle(forWritingTo: url) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+                try? handle.close()
+            } else {
+                try? data.write(to: url)
+            }
+        }
+
+        if host.detectedOS != nil {
+            log("skip existing \(host.detectedOS?.tag ?? "")")
+            return host.detectedOS
+        }
+        do {
+            let posix = try await coordinator.exec(host: host, command: HostOSProbe.posixCommand)
+            log("posix exit=\(posix.exitCode) stdout=\(posix.stdout.prefix(400)) stderr=\(posix.stderr.prefix(200))")
+            if let detected = HostOSProbe.parse(posix.stdout + "\n" + posix.stderr) {
+                log("parsed \(detected.tag)")
+                return detected
+            }
+            let windows = try await coordinator.exec(host: host, command: HostOSProbe.windowsCommand)
+            log("windows exit=\(windows.exitCode) stdout=\(windows.stdout.prefix(400)) stderr=\(windows.stderr.prefix(200))")
+            if let detected = HostOSProbe.parse(windows.stdout + "\n" + windows.stderr) {
+                log("parsed \(detected.tag)")
+                return detected
+            }
+            log("parse failed")
+            return nil
+        } catch {
+            log("error \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func exec(hostID: UUID, command: String) async throws -> SSHExecResult {
+        guard let host = try await hostRepository.host(id: hostID), !host.isDeleted else {
+            throw ConnectionServiceError.hostNotFound
+        }
+        try await coordinator.prepare(host: host, prompting: prompting)
+        return try await coordinator.exec(host: host, command: command)
     }
 
     private func connectHeadless(hostID: UUID) async throws -> UUID {

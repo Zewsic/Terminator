@@ -47,6 +47,7 @@ extension TerminatorAppModel {
                 sessionPersistence: draft.sessionPersistence,
                 remoteShell: draft.remoteShell,
                 connectCommands: draft.connectCommands,
+                detectedOS: existing?.detectedOS,
                 createdAt: existing?.createdAt ?? now,
                 updatedAt: now,
                 deletedAt: existing?.deletedAt

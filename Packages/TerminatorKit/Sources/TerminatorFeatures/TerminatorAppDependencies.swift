@@ -19,6 +19,8 @@ public struct TerminatorAppDependencies: Sendable {
     public let knownHostRepository: (any KnownHostRepository)?
     public let openSSHService: (any OpenSSHIntegrationService)?
     public let externalImportService: (any ExternalImportService)?
+    public let tunnelRepository: (any TunnelRepository)?
+    public let tunnelController: (any SSHTunnelControlling)?
 
     public init(
         hostRepository: any HostRepository,
@@ -35,7 +37,9 @@ public struct TerminatorAppDependencies: Sendable {
         sessionLogExporter: (any SessionLogExporting)? = nil,
         knownHostRepository: (any KnownHostRepository)? = nil,
         openSSHService: (any OpenSSHIntegrationService)? = nil,
-        externalImportService: (any ExternalImportService)? = nil
+        externalImportService: (any ExternalImportService)? = nil,
+        tunnelRepository: (any TunnelRepository)? = nil,
+        tunnelController: (any SSHTunnelControlling)? = nil
     ) {
         self.hostRepository = hostRepository
         self.credentialRepository = credentialRepository
@@ -52,5 +56,7 @@ public struct TerminatorAppDependencies: Sendable {
         self.knownHostRepository = knownHostRepository
         self.openSSHService = openSSHService
         self.externalImportService = externalImportService
+        self.tunnelRepository = tunnelRepository
+        self.tunnelController = tunnelController
     }
 }

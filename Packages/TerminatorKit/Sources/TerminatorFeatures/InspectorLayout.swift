@@ -1,59 +1,52 @@
 import SwiftUI
 
-/// Keeps the workspace full-width until the user opens an inspector.
+/// Presents an inspector above the full-width workspace without changing its layout.
 struct InspectorLayout<Content: View, Inspector: View>: View {
     private let content: Content
     private let inspector: Inspector?
     private let isInspectorPresented: Bool?
     private let onContentInteraction: (() -> Void)?
-    @State private var inspectorWidth: CGFloat = 540
-    @State private var resizeStartWidth: CGFloat = 540
-    @State private var isResizing = false
+    private let inspectorWidth: CGFloat
 
     init(
         @ViewBuilder content: () -> Content,
         @ViewBuilder inspector: () -> Inspector?,
+        inspectorWidth: CGFloat = 540,
         isInspectorPresented: Bool? = nil,
         onContentInteraction: (() -> Void)? = nil
     ) {
         self.content = content()
         self.inspector = inspector()
+        self.inspectorWidth = inspectorWidth
         self.isInspectorPresented = isInspectorPresented
         self.onContentInteraction = onContentInteraction
     }
 
     var body: some View {
         let showsInspector = isInspectorPresented ?? (inspector != nil)
-        HStack(spacing: 0) {
+        ZStack(alignment: .trailing) {
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .simultaneousGesture(TapGesture().onEnded {
-                    if showsInspector { onContentInteraction?() }
-                })
+
+            if showsInspector {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { onContentInteraction?() }
+                    .zIndex(0.5)
+            }
+
             if showsInspector, let inspector {
-                Rectangle()
-                    .fill(.separator)
-                    .frame(width: 1)
-                    .contentShape(Rectangle().inset(by: -4))
-                    .gesture(
-                        DragGesture()
-                            .onChanged { value in
-                                if !isResizing {
-                                    isResizing = true
-                                    resizeStartWidth = inspectorWidth
-                                }
-                                inspectorWidth = min(max(resizeStartWidth - value.translation.width, 360), 760)
-                            }
-                            .onEnded { _ in isResizing = false }
-                    )
-                    .transition(.opacity)
                 inspector
                     .frame(width: inspectorWidth)
                     .frame(maxHeight: .infinity)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 24))
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 10)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .zIndex(1)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: showsInspector)
+        .animation(.snappy(duration: 0.24), value: showsInspector)
+        .animation(.snappy(duration: 0.24), value: inspectorWidth)
     }
 }

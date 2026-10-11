@@ -149,9 +149,13 @@ struct HostsView: View {
         }
     }
 
+    private var hostGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: HostCardMetrics.width, maximum: HostCardMetrics.width), spacing: HostCardMetrics.spacing, alignment: .leading)]
+    }
+
     private var hostList: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 12) {
                 ForEach(hostGroups) { group in
                     Button {
                         withAnimation(.easeInOut(duration: 0.18)) {
@@ -171,88 +175,78 @@ struct HostsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
+                    .padding(.top, 4)
 
                     if !collapsedHostGroups.contains(group.id) {
-                        ForEach(group.hosts) { host in
-                            hostRow(host)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background {
-                                    if selectedHostID == host.id {
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(Color.accentColor.opacity(0.16))
-                                    }
-                                }
-                                .contentShape(Rectangle())
-                                .onTapGesture { selectedHostID = host.id }
+                        LazyVGrid(columns: hostGridColumns, alignment: .leading, spacing: HostCardMetrics.spacing) {
+                            ForEach(group.hosts) { host in
+                                hostCard(host)
+                            }
                         }
                     }
                 }
                 if model.capabilities.externalFileAccess {
-                    ForEach(availableOpenSSHHosts) { host in
-                        HStack {
-                            Image(systemName: "server.rack").foregroundStyle(.secondary)
-                            VStack(alignment: .leading) {
-                                Text(host.alias).fontWeight(.medium)
-                                Text("\(host.username)@\(host.hostname):\(host.port)")
-                                    .font(.caption).foregroundStyle(.secondary)
+                    LazyVGrid(columns: hostGridColumns, alignment: .leading, spacing: HostCardMetrics.spacing) {
+                        ForEach(availableOpenSSHHosts) { host in
+                            importHostCard(
+                                title: host.alias,
+                                subtitle: "\(host.username)@\(host.hostname):\(host.port)",
+                                caption: FeatureL10n.text(.hostsOpenssh)
+                            )
+                            .onTapGesture { openDiscoveredHost(host) }
+                            .contextMenu {
+                                Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
+                                    openDiscoveredHost(host)
+                                }
                             }
-                            Spacer()
-                            Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
-                                .labelStyle(.iconOnly)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                        .contextMenu {
-                            Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") { openDiscoveredHost(host) }
-                        }
-                    }
-                    ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
-                        ForEach(bundle.hosts.filter(matchesSearch)) { host in
-                            externalHostRow(host, bundle: bundle)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
+                        ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
+                            ForEach(bundle.hosts.filter(matchesSearch)) { host in
+                                externalHostRow(host, bundle: bundle)
+                            }
                         }
                     }
                 }
             }
-            .padding(.vertical, 8)
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minWidth: 280, idealWidth: 360)
         .accessibilityIdentifier("hosts-list")
     }
 
-    private func hostRow(_ host: HostProfile) -> some View {
-        HostRow(host: host, username: resolvedUsername(for: host), phase: model.connectionPhase(for: host.id))
-            .tag(host.id)
-            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                guard model.capabilities.externalTerminal else { return }
-                Task { await model.connectInBackground(host, with: .terminal) }
-            })
-            .contextMenu {
-                if model.capabilities.externalTerminal {
-                    Menu(FeatureL10n.text(.hostsConnectWith)) {
-                        ForEach(model.terminalApplications) { terminal in
-                            Button(terminal.displayName) { Task { await model.connect(host, with: terminal) } }
-                        }
+    private func hostCard(_ host: HostProfile) -> some View {
+        HostCard(
+            host: host,
+            username: resolvedUsername(for: host),
+            phase: model.connectionPhase(for: host.id),
+            isSelected: selectedHostID == host.id
+        )
+        .tag(host.id)
+        .onTapGesture { selectedHostID = host.id }
+        .simultaneousGesture(TapGesture(count: 2).onEnded {
+            guard model.capabilities.externalTerminal else { return }
+            Task { await model.connectInBackground(host, with: .terminal) }
+        })
+        .contextMenu {
+            if model.capabilities.externalTerminal {
+                Menu(FeatureL10n.text(.hostsConnectWith)) {
+                    ForEach(model.terminalApplications) { terminal in
+                        Button(terminal.displayName) { Task { await model.connect(host, with: terminal) } }
                     }
-                    if !model.connectionPhase(for: host.id).isDisconnected {
-                        Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
-                            Task { await model.disconnect(host) }
-                        }
+                }
+                if !model.connectionPhase(for: host.id).isDisconnected {
+                    Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
+                        Task { await model.disconnect(host) }
                     }
-                    Divider()
                 }
-                Button(FeatureL10n.text(.hostsEdit)) { openEditor(HostDraft(host: host)) }
-                if model.capabilities.externalFileAccess {
-                    Button(FeatureL10n.text(.hostsExportToOpenssh)) { openExporter(host) }
-                }
-                Button(FeatureL10n.text(.hostsArchive), role: .destructive) { pendingDelete = host }
+                Divider()
             }
+            Button(FeatureL10n.text(.hostsEdit)) { openEditor(HostDraft(host: host)) }
+            if model.capabilities.externalFileAccess {
+                Button(FeatureL10n.text(.hostsExportToOpenssh)) { openExporter(host) }
+            }
+            Button(FeatureL10n.text(.hostsArchive), role: .destructive) { pendingDelete = host }
+        }
     }
 
     private func closeInspector() {
@@ -339,19 +333,46 @@ struct HostsView: View {
             editorSessionID = UUID()
             editorDraft = draft
         } label: {
-            HStack {
-                Image(systemName: "server.rack").foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(host.label).fontWeight(.medium)
-                    Text("\(host.hostname):\(host.port) · \(bundle.source.displayName)")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
+            importHostCard(
+                title: host.label,
+                subtitle: "\(host.hostname):\(host.port)",
+                caption: bundle.source.displayName
+            )
         }
         .buttonStyle(.plain)
+    }
+
+    private func importHostCard(title: String, subtitle: String, caption: String) -> some View {
+        HStack(spacing: HostCardMetrics.iconInset) {
+            Image(systemName: "server.rack")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(.primary)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: HostCardMetrics.iconSize, height: HostCardMetrics.iconSize)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+                    Text(caption)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(HostCardMetrics.iconInset)
+        .frame(width: HostCardMetrics.width, height: HostCardMetrics.height, alignment: .leading)
+        .contentShape(Rectangle())
+        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: HostCardMetrics.cornerRadius))
     }
 
     private func resolvedUsername(for host: HostProfile) -> String {

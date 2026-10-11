@@ -69,6 +69,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
     public var sessionPersistence: SessionPersistence
     public var remoteShell: RemoteShell
     public var connectCommands: String
+    public var detectedOS: DetectedHostOS?
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
@@ -85,6 +86,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         sessionPersistence: SessionPersistence = .none,
         remoteShell: RemoteShell = .login,
         connectCommands: String = "",
+        detectedOS: DetectedHostOS? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         deletedAt: Date? = nil
@@ -100,6 +102,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         self.sessionPersistence = sessionPersistence
         self.remoteShell = remoteShell
         self.connectCommands = connectCommands
+        self.detectedOS = detectedOS
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -138,6 +141,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
             sessionPersistence: sessionPersistence,
             remoteShell: remoteShell,
             connectCommands: connectCommands,
+            detectedOS: nil,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -154,7 +158,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, displayName, hostname, port, authentication, username, credentialID
-        case group, tags, notes, sessionPersistence, remoteShell, connectCommands, createdAt, updatedAt, deletedAt
+        case group, tags, notes, sessionPersistence, remoteShell, connectCommands, detectedOS, createdAt, updatedAt, deletedAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -179,6 +183,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         sessionPersistence = try container.decodeIfPresent(SessionPersistence.self, forKey: .sessionPersistence) ?? .none
         remoteShell = try container.decodeIfPresent(RemoteShell.self, forKey: .remoteShell) ?? .login
         connectCommands = try container.decodeIfPresent(String.self, forKey: .connectCommands) ?? ""
+        detectedOS = try container.decodeIfPresent(DetectedHostOS.self, forKey: .detectedOS)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -197,6 +202,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         try container.encode(sessionPersistence, forKey: .sessionPersistence)
         try container.encode(remoteShell, forKey: .remoteShell)
         try container.encode(connectCommands, forKey: .connectCommands)
+        try container.encodeIfPresent(detectedOS, forKey: .detectedOS)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)

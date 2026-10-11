@@ -1,5 +1,8 @@
 import SwiftUI
 import TerminatorCore
+#if os(macOS)
+import AppKit
+#endif
 
 public struct RootView: View {
     @Environment(TerminatorAppModel.self) private var model
@@ -153,10 +156,37 @@ public struct RootView: View {
             }
             .scrollIndicators(.hidden)
             .accessibilityIdentifier("main-sidebar")
+
+            Button(action: openLocalTerminal) {
+                HStack(spacing: 8) {
+                    Image(systemName: "laptopcomputer")
+                    Text(FeatureL10n.text(.sectionLocalTerminal))
+                }
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
+            .tint(.blue)
+            .controlSize(.large)
+            .help(FeatureL10n.text(.sectionLocalTerminal))
+            .accessibilityIdentifier("local-terminal")
+            .accessibilityLabel(FeatureL10n.text(.sectionLocalTerminal))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 12)
+            .padding(.top, 4)
         }
         .frame(width: 214)
         .frame(maxHeight: .infinity)
         .glassEffect(.regular, in: .rect(cornerRadius: 24))
+    }
+
+    private func openLocalTerminal() {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
+        Task {
+            try? await NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        }
     }
 
     private func toggleSidebar() {

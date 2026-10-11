@@ -70,6 +70,9 @@ enum TerminatorConnectionServiceMain {
             terminalLauncher: launcher
         )
         await prompting.attach(runtime)
+        await coordinator.setTunnelPhaseHandler { [weak runtime] id, phase in
+            Task { await runtime?.publishTunnelPhase(id: id, phase: phase) }
+        }
         try await runtime.start()
         try await runtime.waitUntilStopped()
     }
