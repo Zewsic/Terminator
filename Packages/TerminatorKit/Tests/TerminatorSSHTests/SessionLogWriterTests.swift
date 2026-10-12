@@ -54,17 +54,51 @@ import TerminatorTestSupport
         startedAt: old, endedAt: old, state: .complete, isPinned: true, relativePath: "pinned", encryptionKeyID: SecretID())
     let expired = SessionLogMetadata(hostID: UUID(), hostDisplayName: "Expired", terminal: .terminal,
         startedAt: old, endedAt: old, state: .complete, relativePath: "expired", encryptionKeyID: SecretID())
-    let repository = InMemoryTerminatorStore(sessionLogs: [pinned, expired])
+    let archived = SessionLogMetadata(hostID: UUID(), hostDisplayName: "Archived", terminal: .terminal,
+        startedAt: old, endedAt: old, state: .complete, deletedAt: old, relativePath: "archived", encryptionKeyID: SecretID())
+    let repository = InMemoryTerminatorStore(sessionLogs: [pinned, expired, archived])
     let secrets = InMemorySecretStore()
     try await secrets.store(Data(repeating: 1, count: 32), for: pinned.encryptionKeyID)
     try await secrets.store(Data(repeating: 2, count: 32), for: expired.encryptionKeyID)
+    try await secrets.store(Data(repeating: 3, count: 32), for: archived.encryptionKeyID)
     let directory = FileManager.default.temporaryDirectory.appending(path: "TerminatorLogTests-\(UUID())")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     FileManager.default.createFile(atPath: directory.appending(path: "pinned").path, contents: Data())
     FileManager.default.createFile(atPath: directory.appending(path: "expired").path, contents: Data())
+    FileManager.default.createFile(atPath: directory.appending(path: "archived").path, contents: Data())
 
     await SessionLogWriter.purgeExpired(olderThan: .now.addingTimeInterval(-90 * 86_400), repository: repository, secretStore: secrets, baseURL: directory)
     #expect(try await repository.sessionLog(id: pinned.id) != nil)
     #expect(try await repository.sessionLog(id: expired.id) == nil)
+    #expect(try await repository.sessionLog(id: archived.id) != nil)
+}
+
+@Test func orphanedActiveLogsSettleAsIncomplete() async throws {
+    let live = SessionLogMetadata(hostID: UUID(), hostDisplayName: "Live", terminal: .terminal, relativePath: "live", encryptionKeyID: SecretID())
+    let orphan = SessionLogMetadata(hostID: UUID(), hostDisplayName: "Orphan", terminal: .terminal, relativePath: "orphan", encryptionKeyID: SecretID())
+    let repository = InMemoryTerminatorStore(sessionLogs: [live, orphan])
+    await SessionLogWriter.settleOrphanedActiveLogs(repository: repository, liveLogIDs: [live.id])
+    let settledLive = try #require(await repository.sessionLog(id: live.id))
+    let settledOrphan = try #require(await repository.sessionLog(id: orphan.id))
+    #expect(settledLive.state == .active)
+    #expect(settledOrphan.state == .incomplete)
+    #expect(settledOrphan.endedAt != nil)
+}
+
+@Test func abnormalFinishMarksTheLogIncomplete() async throws {
+    let repository = InMemoryTerminatorStore()
+    let secrets = InMemorySecretStore()
+    let directory = FileManager.default.temporaryDirectory.appending(path: "TerminatorLogTests-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let writer = try await SessionLogWriter.create(
+        host: HostProfile(displayName: "Test", hostname: "localhost", username: "tester"),
+        terminal: .terminal, repository: repository, secretStore: secrets, baseURL: directory
+    )
+    await writer.finish(as: .incomplete)
+    let metadata = await writer.metadata
+    #expect(metadata.state == .incomplete)
+    #expect(metadata.endedAt != nil)
+    await writer.finish()
+    #expect(await writer.metadata.state == .incomplete)
 }

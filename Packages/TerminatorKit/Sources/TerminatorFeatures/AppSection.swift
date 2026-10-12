@@ -3,7 +3,8 @@ import TerminatorCore
 public enum AppSection: String, CaseIterable, Identifiable, Sendable {
     case hosts
     case tunnels
-    case services
+    case containers
+    case tasks
     case credentials
     case snippets
     case logs
@@ -14,10 +15,11 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .hosts: FeatureL10n.text(.sectionHosts)
         case .tunnels: FeatureL10n.text(.sectionTunnels)
-        case .services: "Services"
+        case .containers: FeatureL10n.text(.sectionServices)
         case .credentials: FeatureL10n.text(.sectionCredentials)
         case .snippets: FeatureL10n.text(.sectionSnippets)
         case .logs: FeatureL10n.text(.sectionLogs)
+        case .tasks: FeatureL10n.text(.sectionTasks)
         }
     }
 
@@ -25,12 +27,15 @@ public enum AppSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .hosts: "server.rack"
         case .tunnels: "arrow.left.arrow.right"
-        case .services: "point.3.connected.trianglepath.dotted"
+        case .containers: "shippingbox"
         case .credentials: "key"
         case .snippets: "curlybraces"
         case .logs: "text.document"
+        case .tasks: "checklist"
         }
     }
-
     public static func available(for capabilities: AppCapabilities) -> [AppSection] { allCases }
+
+    public static let showServicesTabKey = "sidebar.showServicesTab"
+    public static let showTasksTabKey = "sidebar.showTasksTab"
 }

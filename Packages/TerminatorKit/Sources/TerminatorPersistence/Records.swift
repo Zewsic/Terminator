@@ -3,6 +3,77 @@ import SwiftData
 import TerminatorCore
 
 @Model
+final class SnippetRecord {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    var script: String
+    var group: String?
+    var tags: [String]
+    var notes: String
+    var lastUsedAt: Date?
+    var externalID: String?
+    var createdAt: Date
+    var updatedAt: Date
+    var deletedAt: Date?
+
+    init(profile: SnippetProfile) {
+        id = profile.id
+        name = profile.name
+        script = profile.script
+        group = profile.group
+        tags = profile.tags
+        notes = profile.notes
+        lastUsedAt = profile.lastUsedAt
+        externalID = profile.externalID
+        createdAt = profile.createdAt
+        updatedAt = profile.updatedAt
+        deletedAt = profile.deletedAt
+    }
+
+    var domain: SnippetProfile {
+        SnippetProfile(
+            id: id, name: name, script: script, group: group, tags: tags, notes: notes,
+            lastUsedAt: lastUsedAt, externalID: externalID,
+            createdAt: createdAt, updatedAt: updatedAt, deletedAt: deletedAt
+        )
+    }
+
+    func apply(_ profile: SnippetProfile) {
+        name = profile.name
+        script = profile.script
+        group = profile.group
+        tags = profile.tags
+        notes = profile.notes
+        lastUsedAt = profile.lastUsedAt
+        externalID = profile.externalID
+        createdAt = profile.createdAt
+        updatedAt = profile.updatedAt
+        deletedAt = profile.deletedAt
+    }
+}
+
+@Model
+final class HostCommandSegmentRecord {
+    @Attribute(.unique) var id: UUID
+    var hostID: UUID
+    var position: Int
+    var text: String
+    var snippetID: UUID?
+
+    init(segment: ConnectCommandSegment, hostID: UUID, position: Int) {
+        id = segment.id
+        self.hostID = hostID
+        self.position = position
+        text = segment.text
+        snippetID = segment.snippetID
+    }
+
+    var segment: ConnectCommandSegment {
+        ConnectCommandSegment(id: id, text: text, snippetID: snippetID)
+    }
+}
+
+@Model
 final class HostRecord {
     @Attribute(.unique) var id: UUID
     var displayName: String
@@ -23,6 +94,8 @@ final class HostRecord {
     var remoteShellCustomPath: String = ""
     var connectCommands: String = ""
     var detectedOSData: Data? = nil
+    var alwaysConnected: Bool = false
+    var dockerCommandPrefix: String = "docker"
     var createdAt: Date
     var updatedAt: Date
     var deletedAt: Date?
@@ -42,6 +115,8 @@ final class HostRecord {
         remoteShellCustomPath = profile.remoteShell.customPath
         connectCommands = profile.connectCommands
         detectedOSData = profile.detectedOS.flatMap { try? JSONEncoder().encode($0) }
+        alwaysConnected = profile.alwaysConnected
+        dockerCommandPrefix = profile.dockerCommandPrefix
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt
@@ -75,6 +150,8 @@ final class HostRecord {
             ),
             connectCommands: connectCommands,
             detectedOS: detectedOSData.flatMap { try? JSONDecoder().decode(DetectedHostOS.self, from: $0) },
+            alwaysConnected: alwaysConnected,
+            dockerCommandPrefix: dockerCommandPrefix,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -93,6 +170,8 @@ final class HostRecord {
         remoteShellCustomPath = profile.remoteShell.customPath
         connectCommands = profile.connectCommands
         detectedOSData = profile.detectedOS.flatMap { try? JSONEncoder().encode($0) }
+        alwaysConnected = profile.alwaysConnected
+        dockerCommandPrefix = profile.dockerCommandPrefix
         createdAt = profile.createdAt
         updatedAt = profile.updatedAt
         deletedAt = profile.deletedAt
@@ -407,6 +486,7 @@ final class SessionLogRecord {
     var reconnectCount: Int
     var stateRawValue: String
     var isPinned: Bool
+    var deletedAt: Date?
     var relativePath: String
     var encryptionKeyID: UUID
 
@@ -414,7 +494,7 @@ final class SessionLogRecord {
         id = log.id; hostID = log.hostID; hostDisplayName = log.hostDisplayName
         terminalRawValue = log.terminal.rawValue; startedAt = log.startedAt; endedAt = log.endedAt
         byteCount = log.byteCount; reconnectCount = log.reconnectCount
-        stateRawValue = log.state.rawValue; isPinned = log.isPinned
+        stateRawValue = log.state.rawValue; isPinned = log.isPinned; deletedAt = log.deletedAt
         relativePath = log.relativePath; encryptionKeyID = log.encryptionKeyID.rawValue
     }
 
@@ -425,7 +505,7 @@ final class SessionLogRecord {
             startedAt: startedAt, endedAt: endedAt, byteCount: byteCount,
             reconnectCount: reconnectCount,
             state: SessionLogState(rawValue: stateRawValue) ?? .incomplete,
-            isPinned: isPinned, relativePath: relativePath,
+            isPinned: isPinned, deletedAt: deletedAt, relativePath: relativePath,
             encryptionKeyID: SecretID(rawValue: encryptionKeyID)
         )
     }
@@ -434,7 +514,7 @@ final class SessionLogRecord {
         hostID = log.hostID; hostDisplayName = log.hostDisplayName
         terminalRawValue = log.terminal.rawValue; startedAt = log.startedAt; endedAt = log.endedAt
         byteCount = log.byteCount; reconnectCount = log.reconnectCount
-        stateRawValue = log.state.rawValue; isPinned = log.isPinned
+        stateRawValue = log.state.rawValue; isPinned = log.isPinned; deletedAt = log.deletedAt
         relativePath = log.relativePath; encryptionKeyID = log.encryptionKeyID.rawValue
     }
 }

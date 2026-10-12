@@ -37,15 +37,18 @@ public actor SessionLogWriter {
         terminal: TerminalApplication,
         repository: any SessionLogRepository,
         secretStore: any SecretStore,
-        baseURL: URL
+        baseURL: URL,
+        displayName: String? = nil
     ) async throws -> SessionLogWriter {
         let id = UUID()
         let keyID = SecretID()
         let keyData = randomData(count: 32)
         try await secretStore.store(keyData, for: keyID)
         let relativePath = "\(id.uuidString).tlog"
+        let label = displayName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hostDisplayName = (label?.isEmpty == false) ? label! : host.displayName
         var metadata = SessionLogMetadata(
-            id: id, hostID: host.id, hostDisplayName: host.displayName,
+            id: id, hostID: host.id, hostDisplayName: hostDisplayName,
             terminal: terminal, relativePath: relativePath, encryptionKeyID: keyID
         )
         do {
@@ -95,18 +98,18 @@ public actor SessionLogWriter {
             let lengthData = withUnsafeBytes(of: &length) { Data($0) }
             try handle.write(contentsOf: lengthData)
             try handle.write(contentsOf: combined)
-            metadata.byteCount += Int64(data.count)
-            try await repository.saveSessionLog(metadata)
-            return true
         } catch {
             failed = true
             metadata.state = .incomplete
             metadata.endedAt = .now
-            try? await repository.saveSessionLog(metadata)
+            await saveMetadata()
             try? handle.close()
             self.handle = nil
             return false
         }
+        metadata.byteCount += Int64(data.count)
+        await saveMetadata()
+        return true
     }
 
     public func markReconnect() async {
@@ -114,14 +117,38 @@ public actor SessionLogWriter {
         _ = await append(kind: .status, data: Data("Reconnected with a new remote shell".utf8))
     }
 
-    public func finish() async {
+    public func finish(as finalState: SessionLogState = .complete) async {
         guard metadata.endedAt == nil else { return }
         metadata.endedAt = .now
-        if metadata.state == .active { metadata.state = .complete }
+        if metadata.state == .active {
+            metadata.state = finalState == .active ? .complete : finalState
+        }
         try? handle?.synchronize()
         try? handle?.close()
         handle = nil
-        try? await repository.saveSessionLog(metadata)
+        await saveMetadata()
+    }
+
+    /// Marks active logs whose writer is gone. A killed helper leaves those rows active forever.
+    public static func settleOrphanedActiveLogs(
+        repository: any SessionLogRepository,
+        liveLogIDs: Set<UUID> = [],
+        shouldContinue: @Sendable () -> Bool = { true }
+    ) async {
+        guard let logs = try? await repository.listSessionLogs() else { return }
+        for var log in logs where log.state == .active && !liveLogIDs.contains(log.id) {
+            guard shouldContinue() else { return }
+            log.state = .incomplete
+            if log.endedAt == nil { log.endedAt = .now }
+            try? await repository.saveSessionLog(log)
+        }
+    }
+
+    private func saveMetadata() async {
+        for attempt in 0..<3 {
+            if (try? await repository.saveSessionLog(metadata)) != nil { return }
+            if attempt < 2 { try? await Task.sleep(for: .milliseconds(40)) }
+        }
     }
 
     public static func readChunks(
@@ -157,7 +184,7 @@ public actor SessionLogWriter {
         baseURL: URL
     ) async {
         guard let logs = try? await repository.listSessionLogs() else { return }
-        for log in logs where !log.isPinned && log.state != .active && (log.endedAt ?? log.startedAt) < cutoff {
+        for log in logs where !log.isPinned && log.deletedAt == nil && log.state != .active && (log.endedAt ?? log.startedAt) < cutoff {
             let url = baseURL.appending(path: log.relativePath)
             try? FileManager.default.removeItem(at: url)
             try? await secretStore.purge(id: log.encryptionKeyID)
@@ -197,3 +224,23 @@ public actor SessionLogWriter {
         throw SessionLogError.invalidFormat
     }
 }
+
+#if os(macOS)
+public enum SessionLogMaintenance {
+    /// Settles active logs only while the connection helper is not running.
+    /// The lock is released before the sweep so the helper can start.
+    public static func settleIfHelperIsIdle(repository: any SessionLogRepository) async {
+        guard helperIsIdle() else { return }
+        await SessionLogWriter.settleOrphanedActiveLogs(repository: repository, shouldContinue: helperIsIdle)
+    }
+
+    private static func helperIsIdle() -> Bool {
+        let fd = Darwin.open(ConnectionServicePaths.serviceLockURL.path, O_RDWR)
+        if fd < 0 { return true }
+        defer { Darwin.close(fd) }
+        guard Darwin.lockf(fd, F_TLOCK, 0) == 0 else { return false }
+        Darwin.lockf(fd, F_ULOCK, 0)
+        return true
+    }
+}
+#endif

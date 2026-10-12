@@ -8,48 +8,49 @@ struct TunnelsView: View {
     @State private var editorTunnel: TunnelProfile?
     @State private var isCreating = false
     @State private var pendingDelete: TunnelProfile?
-    @State private var collapsedGroups: Set<String> = []
-
-    private struct TunnelListGroup: Identifiable {
-        let id: String
-        let title: String
-        let tunnels: [TunnelProfile]
-    }
+    @State private var tray: CatalogTray?
+    @State private var traySelection: Set<String> = []
+    @State private var isImportingTray = false
 
     var body: some View {
-        Group {
-            if model.tunnels.isEmpty && !hasPendingImports {
-                ContentUnavailableView {
-                    Label(FeatureL10n.text(.tunnelEmpty), systemImage: "arrow.left.arrow.right")
-                } description: {
-                    Text(FeatureL10n.text(.tunnelEmptyDescription))
-                } actions: {
-                    Button(FeatureL10n.text(.tunnelAdd), systemImage: "plus") { isCreating = true }
-                        .buttonStyle(.glassProminent).tint(.blue)
-                        .accessibilityIdentifier("add-tunnel-empty")
+        InspectorLayout(content: {
+            VStack(spacing: 0) {
+                CatalogImportBanner(hint: .tunnelsImportBanner) { openTray(.source($0.id)) }
+                if model.tunnels.isEmpty {
+                    ContentUnavailableView {
+                        Label(FeatureL10n.text(.tunnelEmpty), systemImage: "arrow.left.arrow.right")
+                    } description: {
+                        Text(FeatureL10n.text(.tunnelEmptyDescription))
+                    } actions: {
+                        Button(FeatureL10n.text(.tunnelAdd), systemImage: "plus") {
+                        tray = nil
+                        isCreating = true
+                    }
+                            .emptyCatalogAddStyle()
+                            .accessibilityIdentifier("add-tunnel-empty")
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    tunnelList
                 }
-            } else {
-                InspectorLayout(content: {
-                    VStack(spacing: 0) {
-                        CatalogImportBanner(hint: .tunnelsImportBanner)
-                        tunnelList
-                    }
-                }, inspector: {
-                    if let editorTunnel {
-                        TunnelEditor(tunnel: editorTunnel) { draft in
-                            await model.saveTunnel(draft)
-                        } onStart: {
-                            Task { await model.startTunnel(id: editorTunnel.id) }
-                        } onStop: {
-                            Task { await model.stopTunnel(id: editorTunnel.id) }
-                        }
-                        .id(editorTunnel.id)
-                    }
-                }, isInspectorPresented: editorTunnel != nil, onContentInteraction: {
-                    closeInspector()
-                })
             }
-        }
+        }, inspector: {
+            if let tray {
+                tunnelPicker(tray)
+            } else if let editorTunnel {
+                TunnelEditor(tunnel: editorTunnel) { draft in
+                    await model.saveTunnel(draft)
+                } onStart: {
+                    Task { await model.startTunnel(id: editorTunnel.id) }
+                } onStop: {
+                    Task { await model.stopTunnel(id: editorTunnel.id) }
+                }
+                .id(editorTunnel.id)
+            }
+        }, inspectorWidth: tray == nil ? 540 : InspectorMetrics.compactWidth,
+           isInspectorPresented: tray != nil || editorTunnel != nil, onContentInteraction: {
+            closeInspector()
+        })
         .navigationTitle(FeatureL10n.text(.sectionTunnels))
         .toolbar {
             ToolbarSpacer(.flexible)
@@ -59,9 +60,12 @@ struct TunnelsView: View {
             .sharedBackgroundVisibility(.hidden)
             ToolbarSpacer(.fixed)
             ToolbarItemGroup {
-                Button(FeatureL10n.text(.tunnelAdd), systemImage: "plus") { isCreating = true }
+                Button(FeatureL10n.text(.tunnelAdd), systemImage: "plus") {
+                    tray = nil
+                    isCreating = true
+                }
                     .accessibilityIdentifier("add-tunnel")
-                ExternalImportMenu(hint: .tunnelsImportBanner)
+                ExternalImportMenu { openTray($0) }
             }
         }
         .sheet(isPresented: $isCreating) { TunnelCreateSheet() }
@@ -80,6 +84,7 @@ struct TunnelsView: View {
             Text(FeatureL10n.text(.tunnelArchiveMessage))
         }
         .onChange(of: selectedTunnelID) { _, id in
+            if id != nil { tray = nil }
             editorTunnel = id.flatMap { tunnelID in model.tunnels.first { $0.id == tunnelID } }
         }
         .onChange(of: model.tunnels) { _, _ in
@@ -96,45 +101,10 @@ struct TunnelsView: View {
     private var tunnelList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(groups) { group in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
-                            if collapsedGroups.contains(group.id) { collapsedGroups.remove(group.id) }
-                            else { collapsedGroups.insert(group.id) }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: collapsedGroups.contains(group.id) ? "chevron.right" : "chevron.down")
-                                .font(.caption.weight(.semibold))
-                            Text(group.title)
-                            Spacer(minLength: 0)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 4)
-                    if !collapsedGroups.contains(group.id) {
-                        LazyVGrid(columns: tunnelGridColumns, alignment: .leading, spacing: HostCardMetrics.spacing) {
-                            ForEach(group.tunnels) { tunnel in
-                                tunnelCard(tunnel)
-                            }
-                        }
-                    }
-                }
-                if hasPendingImports {
-                    Text(FeatureL10n.text(.actionImport))
-                        .font(.headline)
-                        .padding(.top, 8)
+                if !visibleTunnels.isEmpty {
                     LazyVGrid(columns: tunnelGridColumns, alignment: .leading, spacing: HostCardMetrics.spacing) {
-                        ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
-                            ForEach(bundle.tunnels.filter { matchesImport($0) }) { tunnel in
-                                Button {
-                                    Task { await model.importExternalTunnel(tunnel, from: bundle) }
-                                } label: {
-                                    importCard(tunnel, source: bundle.source.displayName)
-                                }
-                                .buttonStyle(.plain)
-                            }
+                        ForEach(visibleTunnels) { tunnel in
+                            tunnelCard(tunnel)
                         }
                     }
                 }
@@ -150,7 +120,7 @@ struct TunnelsView: View {
         return TunnelCard(
             tunnel: tunnel,
             tags: tunnel.derivedTags(in: model.hosts),
-            subtitle: cardSubtitle(tunnel),
+            subtitle: tunnelSubtitle(tunnel),
             phase: phase,
             isSelected: selectedTunnelID == tunnel.id
         )
@@ -174,19 +144,13 @@ struct TunnelsView: View {
         }
     }
 
-    private func importCard(_ tunnel: ExternalImportTunnel, source: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(tunnel.label.isEmpty ? tunnel.kind.rawValue.capitalized : tunnel.label)
-                .font(.callout.weight(.semibold))
-                .lineLimit(1)
-            Text("\(tunnel.bindAddress):\(tunnel.localPort) · \(source)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(HostCardMetrics.iconInset)
-        .frame(width: HostCardMetrics.width, height: HostCardMetrics.height, alignment: .leading)
-        .glassEffect(.regular.interactive(), in: .rect(cornerRadius: HostCardMetrics.cornerRadius))
+    private func tunnelSubtitle(_ tunnel: TunnelProfile) -> String {
+        let base = cardSubtitle(tunnel)
+        guard case .connected = model.tunnelPhase(for: tunnel.id),
+              let traffic = model.tunnelTraffic[tunnel.id] else { return base }
+        let received = ByteCountFormatter.string(fromByteCount: Int64(clamping: traffic.received), countStyle: .binary)
+        let sent = ByteCountFormatter.string(fromByteCount: Int64(clamping: traffic.sent), countStyle: .binary)
+        return "\(base) · ↓\(received) ↑\(sent)"
     }
 
     private func cardSubtitle(_ tunnel: TunnelProfile) -> String {
@@ -199,24 +163,10 @@ struct TunnelsView: View {
         }
     }
 
-    private var groups: [TunnelListGroup] {
-        let filtered = model.tunnels.filter(matches)
-        let grouped = Dictionary(grouping: filtered) { tunnel -> String? in
-            tunnel.groupName(in: model.hosts)
+    private var visibleTunnels: [TunnelProfile] {
+        model.tunnels.filter(matches).sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
         }
-        var result: [TunnelListGroup] = []
-        if let ungrouped = grouped[nil], !ungrouped.isEmpty {
-            result.append(.init(id: "__catalog", title: FeatureL10n.text(.hostsCatalog), tunnels: ungrouped))
-        }
-        result.append(contentsOf: grouped.compactMap { name, tunnels -> TunnelListGroup? in
-            guard let name else { return nil }
-            return .init(id: "group:\(name)", title: name, tunnels: tunnels)
-        }.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })
-        return result
-    }
-
-    private var hasPendingImports: Bool {
-        model.loadedExternalImportBundles.contains { !$0.tunnels.isEmpty }
     }
 
     private func matches(_ tunnel: TunnelProfile) -> Bool {
@@ -226,15 +176,89 @@ struct TunnelsView: View {
         return terms.allSatisfy { haystack.localizedCaseInsensitiveContains($0) }
     }
 
-    private func matchesImport(_ tunnel: ExternalImportTunnel) -> Bool {
-        guard !search.isEmpty else { return true }
-        return tunnel.label.localizedCaseInsensitiveContains(search)
-            || tunnel.targetHost.localizedCaseInsensitiveContains(search)
-    }
-
     private func closeInspector() {
         selectedTunnelID = nil
         editorTunnel = nil
+        tray = nil
+        traySelection = []
+    }
+
+    private func openTray(_ next: CatalogTray) {
+        closeInspector()
+        traySelection = []
+        tray = next
+        guard case .source(let id) = next,
+              let source = model.importSources.first(where: { $0.id == id }) else { return }
+        Task { await model.loadImportSource(source) }
+    }
+
+    private func tunnelPicker(_ tray: CatalogTray) -> some View {
+        let archive = tray == .archive
+        return CatalogPickerPanel(
+            title: archive ? FeatureL10n.text(.actionArchive) : sourceTitle(tray),
+            subtitle: FeatureL10n.text(archive ? .catalogChooseArchive : .catalogChooseImport),
+            records: tunnelPicks(tray),
+            isLoading: isLoading(tray),
+            primaryTitle: FeatureL10n.text(archive ? .catalogRestore : .actionImport),
+            destructiveTitle: archive ? FeatureL10n.text(.catalogDelete) : nil,
+            emptyTitle: FeatureL10n.text(archive ? .featureArchiveArchiveIsEmpty : .catalogNothingToImport),
+            selection: $traySelection,
+            isWorking: isImportingTray,
+            onPrimary: { Task { await applyTunnelTray(tray, purge: false) } },
+            onDestructive: { Task { await applyTunnelTray(tray, purge: true) } },
+            onClose: closeInspector
+        )
+    }
+
+    private func sourceTitle(_ tray: CatalogTray) -> String {
+        guard case .source(let id) = tray else { return FeatureL10n.text(.actionImport) }
+        return model.importSources.first { $0.id == id }?.displayName ?? FeatureL10n.text(.actionImport)
+    }
+
+    private func isLoading(_ tray: CatalogTray) -> Bool {
+        guard case .source(let id) = tray else { return false }
+        return model.loadingImportSourceIDs.contains(id)
+    }
+
+    private func tunnelPicks(_ tray: CatalogTray) -> [CatalogPick] {
+        switch tray {
+        case .archive:
+            return model.archivedTunnels.map { tunnel in
+                CatalogPick(id: tunnel.id.uuidString, title: tunnel.displayName, subtitle: cardSubtitle(tunnel), symbol: "arrow.left.arrow.right")
+            }
+        case .source(let id):
+            return (model.externalImportBundles[id]?.tunnels ?? []).map { tunnel in
+                let title = tunnel.label.isEmpty ? tunnel.kind.rawValue.capitalized : tunnel.label
+                return CatalogPick(
+                    id: "bundle|\(tunnel.id)",
+                    title: title,
+                    subtitle: "\(tunnel.bindAddress):\(tunnel.localPort)",
+                    symbol: "arrow.left.arrow.right"
+                )
+            }
+        }
+    }
+
+    private func applyTunnelTray(_ tray: CatalogTray, purge: Bool) async {
+        guard !isImportingTray else { return }
+        isImportingTray = true
+        defer { isImportingTray = false }
+        let chosen = traySelection
+        switch tray {
+        case .archive:
+            for id in chosen {
+                guard let uuid = UUID(uuidString: id) else { continue }
+                let saved = purge ? await model.purgeTunnel(id: uuid) : await model.restoreTunnel(id: uuid)
+                if saved { traySelection.remove(id) }
+            }
+        case .source(let sourceID):
+            guard let bundle = model.externalImportBundles[sourceID] else { return }
+            for tunnel in bundle.tunnels where chosen.contains("bundle|\(tunnel.id)") {
+                if await model.importExternalTunnel(tunnel, from: bundle) {
+                    traySelection.remove("bundle|\(tunnel.id)")
+                }
+            }
+        }
     }
 }
 
@@ -290,7 +314,7 @@ struct TunnelCard: View {
 
     private var statusColor: Color? {
         switch phase {
-        case .connected: .green
+        case .connected, .agent: .green
         case .resolving, .verifyingHost, .authenticating, .reconnecting, .waitingForUser: .yellow
         case .failed: .red
         case .disconnected: nil

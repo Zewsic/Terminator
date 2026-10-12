@@ -4,8 +4,12 @@ import TerminatorCore
 struct TunnelCreateSheet: View {
     @Environment(TerminatorAppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var draft = TunnelDraft()
+    @State private var draft: TunnelDraft
     @State private var isSaving = false
+
+    init(draft: TunnelDraft = TunnelDraft()) {
+        _draft = State(initialValue: draft)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

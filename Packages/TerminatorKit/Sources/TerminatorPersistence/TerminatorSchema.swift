@@ -196,6 +196,28 @@ public enum TerminatorSchemaV4: VersionedSchema {
             self.createdAt = createdAt; self.updatedAt = updatedAt
         }
     }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
 }
 
 public enum TerminatorSchemaV5: VersionedSchema {
@@ -239,6 +261,28 @@ public enum TerminatorSchemaV5: VersionedSchema {
             createdAt = .now; updatedAt = .now; deletedAt = nil
         }
     }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
 }
 
 public enum TerminatorSchemaV6: VersionedSchema {
@@ -251,10 +295,202 @@ public enum TerminatorSchemaV6: VersionedSchema {
         KnownHostRecord.self,
         SessionLogRecord.self,
     ] }
+
+    // V6 shipped with detected OS data and without the always-connected columns.
+    // Keep this model frozen so an existing store is recognizable before V7.
+    @Model final class HostRecord {
+        @Attribute(.unique) var id: UUID
+        var displayName: String
+        var hostname: String
+        var port: Int
+        var username: String
+        var credentialID: UUID?
+        var authenticationModeRawValue: String = "manual"
+        var identityID: UUID?
+        var credentialIDs: [UUID] = []
+        var authenticationMethodsData: Data?
+        var group: String?
+        var tags: [String]
+        var notes: String
+        var sessionPersistenceRawValue: String = "none"
+        var remoteShellPresetRawValue: String = "loginShell"
+        var remoteShellCustomPath: String = ""
+        var connectCommands: String = ""
+        var detectedOSData: Data? = nil
+        var createdAt: Date
+        var updatedAt: Date
+        var deletedAt: Date?
+
+        init() {
+            id = UUID(); displayName = ""; hostname = ""; port = 22; username = ""
+            credentialID = nil; identityID = nil; group = nil; tags = []; notes = ""
+            createdAt = .now; updatedAt = .now; deletedAt = nil
+        }
+    }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
 }
 
 public enum TerminatorSchemaV7: VersionedSchema {
     public static let versionIdentifier = Schema.Version(7, 0, 0)
+    public static var models: [any PersistentModel.Type] { [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        KnownHostRecord.self,
+        SessionLogRecord.self,
+        TunnelRecord.self,
+    ] }
+
+    // V7 is the shipped tunnel catalog: host rows still have no always-connected columns.
+    @Model final class HostRecord {
+        @Attribute(.unique) var id: UUID
+        var displayName: String
+        var hostname: String
+        var port: Int
+        var username: String
+        var credentialID: UUID?
+        var authenticationModeRawValue: String = "manual"
+        var identityID: UUID?
+        var credentialIDs: [UUID] = []
+        var authenticationMethodsData: Data?
+        var group: String?
+        var tags: [String]
+        var notes: String
+        var sessionPersistenceRawValue: String = "none"
+        var remoteShellPresetRawValue: String = "loginShell"
+        var remoteShellCustomPath: String = ""
+        var connectCommands: String = ""
+        var detectedOSData: Data? = nil
+        var createdAt: Date
+        var updatedAt: Date
+        var deletedAt: Date?
+
+        init() {
+            id = UUID(); displayName = ""; hostname = ""; port = 22; username = ""
+            credentialID = nil; identityID = nil; group = nil; tags = []; notes = ""
+            createdAt = .now; updatedAt = .now; deletedAt = nil
+        }
+    }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
+}
+
+public enum TerminatorSchemaV8: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(8, 0, 0)
+    public static var models: [any PersistentModel.Type] { [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        KnownHostRecord.self,
+        SessionLogRecord.self,
+        TunnelRecord.self,
+    ] }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
+}
+
+public enum TerminatorSchemaV9: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(9, 0, 0)
+    public static var models: [any PersistentModel.Type] { [
+        HostRecord.self,
+        CredentialRecord.self,
+        IdentityRecord.self,
+        ChangeRecord.self,
+        KnownHostRecord.self,
+        SessionLogRecord.self,
+        TunnelRecord.self,
+        SnippetRecord.self,
+        HostCommandSegmentRecord.self,
+    ] }
+
+    /// Session logs shipped without an archive date. This shape stays frozen.
+    @Model final class SessionLogRecord {
+        @Attribute(.unique) var id: UUID
+        var hostID: UUID
+        var hostDisplayName: String
+        var terminalRawValue: String
+        var startedAt: Date
+        var endedAt: Date?
+        var byteCount: Int64
+        var reconnectCount: Int
+        var stateRawValue: String
+        var isPinned: Bool
+        var relativePath: String
+        var encryptionKeyID: UUID
+
+        init() {
+            id = UUID(); hostID = UUID(); hostDisplayName = ""; terminalRawValue = "terminal"
+            startedAt = .now; endedAt = nil; byteCount = 0; reconnectCount = 0
+            stateRawValue = "active"; isPinned = false; relativePath = ""; encryptionKeyID = UUID()
+        }
+    }
+}
+
+public enum TerminatorSchemaV10: VersionedSchema {
+    public static let versionIdentifier = Schema.Version(10, 0, 0)
     public static var models: [any PersistentModel.Type] { TerminatorSchema.currentModels }
 }
 
@@ -264,6 +500,9 @@ public enum TerminatorMigrationPlan: SchemaMigrationPlan {
             TerminatorSchemaV1.self, TerminatorSchemaV2.self, TerminatorSchemaV3.self,
             TerminatorSchemaV4.self, TerminatorSchemaV5.self, TerminatorSchemaV6.self,
             TerminatorSchemaV7.self,
+            TerminatorSchemaV8.self,
+            TerminatorSchemaV9.self,
+            TerminatorSchemaV10.self,
         ]
     }
     public static var stages: [MigrationStage] {
@@ -274,6 +513,9 @@ public enum TerminatorMigrationPlan: SchemaMigrationPlan {
             .lightweight(fromVersion: TerminatorSchemaV4.self, toVersion: TerminatorSchemaV5.self),
             .lightweight(fromVersion: TerminatorSchemaV5.self, toVersion: TerminatorSchemaV6.self),
             .lightweight(fromVersion: TerminatorSchemaV6.self, toVersion: TerminatorSchemaV7.self),
+            .lightweight(fromVersion: TerminatorSchemaV7.self, toVersion: TerminatorSchemaV8.self),
+            .lightweight(fromVersion: TerminatorSchemaV8.self, toVersion: TerminatorSchemaV9.self),
+            .lightweight(fromVersion: TerminatorSchemaV9.self, toVersion: TerminatorSchemaV10.self),
         ]
     }
 }
@@ -283,6 +525,9 @@ public enum TerminatorSchema {
     public static let version5 = Schema(versionedSchema: TerminatorSchemaV5.self)
     public static let version6 = Schema(versionedSchema: TerminatorSchemaV6.self)
     public static let version7 = Schema(versionedSchema: TerminatorSchemaV7.self)
+    public static let version8 = Schema(versionedSchema: TerminatorSchemaV8.self)
+    public static let version9 = Schema(versionedSchema: TerminatorSchemaV9.self)
+    public static let version10 = Schema(versionedSchema: TerminatorSchemaV10.self)
     public static let currentModels: [any PersistentModel.Type] = [
         HostRecord.self,
         CredentialRecord.self,
@@ -291,10 +536,12 @@ public enum TerminatorSchema {
         KnownHostRecord.self,
         SessionLogRecord.self,
         TunnelRecord.self,
+        SnippetRecord.self,
+        HostCommandSegmentRecord.self,
     ]
 
     public static func makeContainer(inMemory: Bool = false) throws -> ModelContainer {
-        let versioned = Schema(versionedSchema: TerminatorSchemaV7.self)
+        let versioned = Schema(versionedSchema: TerminatorSchemaV10.self)
         if inMemory {
             return try ModelContainer(
                 for: versioned,
@@ -321,10 +568,7 @@ public enum TerminatorSchema {
             let inferredConfiguration = ModelConfiguration(
                 "Terminator", schema: inferred, url: url, allowsSave: true
             )
-            var metadataRepairContainer: ModelContainer? = try ModelContainer(
-                for: inferred, configurations: [inferredConfiguration]
-            )
-            metadataRepairContainer = nil
+            _ = try ModelContainer(for: inferred, configurations: [inferredConfiguration])
 
             // The first inferred open normalizes model metadata but can rebuild
             // the table from the legacy physical schema. Close it, restore the
@@ -348,25 +592,58 @@ public enum TerminatorSchema {
 
         try execute("BEGIN EXCLUSIVE", on: database, path: url.path)
         do {
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(
-                database,
-                "SELECT 1 FROM pragma_table_info('ZHOSTRECORD') WHERE name = 'ZDETECTEDOSDATA'",
-                -1,
-                &statement,
-                nil
-            ) == SQLITE_OK else {
-                throw sqliteError(database, path: url.path)
+            guard try hostTableExists(database, path: url.path) else {
+                try execute("COMMIT", on: database, path: url.path)
+                return
             }
-            defer { sqlite3_finalize(statement) }
-            if sqlite3_step(statement) != SQLITE_ROW {
+            if try !columnExists("ZDETECTEDOSDATA", database: database, path: url.path) {
                 try execute("ALTER TABLE ZHOSTRECORD ADD COLUMN ZDETECTEDOSDATA BLOB", on: database, path: url.path)
+            }
+            if try !columnExists("ZALWAYSCONNECTED", database: database, path: url.path) {
+                try execute(
+                    "ALTER TABLE ZHOSTRECORD ADD COLUMN ZALWAYSCONNECTED INTEGER DEFAULT 0",
+                    on: database,
+                    path: url.path
+                )
+            }
+            if try !columnExists("ZDOCKERCOMMANDPREFIX", database: database, path: url.path) {
+                try execute(
+                    "ALTER TABLE ZHOSTRECORD ADD COLUMN ZDOCKERCOMMANDPREFIX VARCHAR DEFAULT 'docker'",
+                    on: database,
+                    path: url.path
+                )
             }
             try execute("COMMIT", on: database, path: url.path)
         } catch {
             sqlite3_exec(database, "ROLLBACK", nil, nil, nil)
             throw error
         }
+    }
+
+    private static func hostTableExists(_ database: OpaquePointer, path: String) throws -> Bool {
+        try queryHasRow(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ZHOSTRECORD'",
+            database: database,
+            path: path
+        )
+    }
+
+    private static func columnExists(_ name: String, database: OpaquePointer, path: String) throws -> Bool {
+        let escaped = name.replacingOccurrences(of: "'", with: "''")
+        return try queryHasRow(
+            "SELECT 1 FROM pragma_table_info('ZHOSTRECORD') WHERE name = '\(escaped)'",
+            database: database,
+            path: path
+        )
+    }
+
+    private static func queryHasRow(_ sql: String, database: OpaquePointer, path: String) throws -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw sqliteError(database, path: path)
+        }
+        defer { sqlite3_finalize(statement) }
+        return sqlite3_step(statement) == SQLITE_ROW
     }
 
     private static func execute(_ sql: String, on database: OpaquePointer, path: String) throws {

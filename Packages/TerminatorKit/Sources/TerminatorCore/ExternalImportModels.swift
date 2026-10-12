@@ -153,11 +153,13 @@ public struct ExternalImportBundle: Codable, Hashable, Sendable {
     public var tunnels: [ExternalImportTunnel]
     public var proxies: [ExternalImportProxy]
     public var knownHosts: [ExternalImportKnownHost]
+    public var snippets: [ExternalImportSnippet]
 
     public init(
         source: ExternalImportSource, hosts: [ExternalImportHost] = [], identities: [ExternalImportIdentity] = [],
         accessKeys: [ExternalImportAccessKey] = [], tunnels: [ExternalImportTunnel] = [],
-        proxies: [ExternalImportProxy] = [], knownHosts: [ExternalImportKnownHost] = []
+        proxies: [ExternalImportProxy] = [], knownHosts: [ExternalImportKnownHost] = [],
+        snippets: [ExternalImportSnippet] = []
     ) {
         self.source = source
         self.hosts = hosts
@@ -166,6 +168,7 @@ public struct ExternalImportBundle: Codable, Hashable, Sendable {
         self.tunnels = tunnels
         self.proxies = proxies
         self.knownHosts = knownHosts
+        self.snippets = snippets
     }
 }
 

@@ -333,24 +333,12 @@ struct AccessKeyEditor: View {
             Text(model.presentedError?.message ?? "")
         }
         .sheet(isPresented: $isExportToHostPresented) {
-            VStack(spacing: 18) {
-                Image(systemName: "server.rack")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.secondary)
-                Text(FeatureL10n.text(.featureAccessKeyEditorExportToHost))
-                    .font(.title2.weight(.semibold))
-                Text(FeatureL10n.text(.featureAccessKeyEditorComingSoon))
-                    .font(.headline)
-                Text(FeatureL10n.text(.featureAccessKeyEditorExportingAnAccessKeyDirectlyToA))
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                Button(FeatureL10n.text(.actionOk)) { isExportToHostPresented = false }
-                    .buttonStyle(.glassProminent)
-                    .tint(.blue)
-                    .keyboardShortcut(.defaultAction)
+            HostPickerSheet(
+                title: FeatureL10n.text(.featureAccessKeyEditorExportToHost),
+                actionTitle: FeatureL10n.text(.featureAccessKeyEditorExportToHost)
+            ) { host in
+                await model.installPublicKey(draft.publicKey, on: host)
             }
-            .padding(32)
-            .frame(width: 420, height: 260)
         }
         .fileImporter(isPresented: $isImportingPrivateKey, allowedContentTypes: [.data, .plainText]) { result in
             if case .success(let url) = result { loadPrivateKeyFile(url) }

@@ -10,6 +10,10 @@ extension TerminatorAppModel {
     }
 
     public func connect(_ host: HostProfile, with terminal: TerminalApplication) async {
+        if connectionPhase(for: host.id).isLinked {
+            await connectInBackground(host, with: terminal)
+            return
+        }
         guard capabilities.externalTerminal, let externalTerminalService else { return }
         connectionHost = host
         connectionTerminal = terminal
@@ -20,6 +24,7 @@ extension TerminatorAppModel {
             let detectedOS = try await externalTerminalService.connect(host: host, terminal: terminal)
             connectionPhase = .connected
             hostConnectionPhases[host.id] = .connected
+            HostListPreferences.shared.noteConnected(host.id)
             await applyDetectedOS(detectedOS, to: host.id)
             Task { await self.refreshDetectedOS(hostID: host.id) }
         } catch is CancellationError {
@@ -40,11 +45,15 @@ extension TerminatorAppModel {
         guard capabilities.externalTerminal, let externalTerminalService else { return }
         backgroundConnectionHost = host
         connectionTerminal = terminal
-        hostConnectionPhases[host.id] = .resolving
+        if (hostConnectionPhases[host.id] ?? .disconnected).isLinked {
+        } else {
+            hostConnectionPhases[host.id] = .resolving
+        }
         beginMonitoringConnection(hostID: host.id, service: externalTerminalService)
         do {
             let detectedOS = try await externalTerminalService.connect(host: host, terminal: terminal)
             hostConnectionPhases[host.id] = .connected
+            HostListPreferences.shared.noteConnected(host.id)
             if connectionHost?.id != host.id { backgroundConnectionHost = nil }
             await applyDetectedOS(detectedOS, to: host.id)
             Task { await self.refreshDetectedOS(hostID: host.id) }
@@ -150,7 +159,7 @@ extension TerminatorAppModel {
             dismissConnection()
             return
         }
-        if case .connected = connectionPhase {
+        if connectionPhase.isLinked {
             dismissConnection()
             return
         }
@@ -175,12 +184,26 @@ extension TerminatorAppModel {
             for await phase in phases {
                 guard !Task.isCancelled, let self else { return }
                 self.hostConnectionPhases[hostID] = phase
+                if case .disconnected = phase { self.clearServiceStatus(hostID) }
+                if case .failed = phase { self.clearServiceStatus(hostID) }
                 if self.connectionHost?.id == hostID { self.connectionPhase = phase }
-                if case .connected = phase {
+                if phase.isLinked {
+                    HostListPreferences.shared.noteConnected(hostID)
                     Task { await self.refreshDetectedOS(hostID: hostID) }
                     Task { await self.startAutomaticTunnels(for: hostID) }
                 }
             }
+        }
+    }
+
+    func trackHostConnections() {
+        guard let service = externalTerminalService else { return }
+        let live = Set(hosts.map(\.id))
+        for id in connectionMonitors.keys where !live.contains(id) {
+            stopMonitoringConnection(hostID: id)
+        }
+        for host in hosts where connectionMonitors[host.id] == nil {
+            beginMonitoringConnection(hostID: host.id, service: service)
         }
     }
 

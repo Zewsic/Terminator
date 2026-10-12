@@ -49,6 +49,9 @@ public enum ConnectionControlRequest: Codable, Sendable {
     case exec(hostID: UUID, command: String)
     case startTunnel(TunnelProfile)
     case stopTunnel(UUID)
+    case prepare(hostID: UUID)
+    case docker(endpoint: DockerEndpoint, containerID: String, action: DockerControlAction)
+    case containerShell(endpoint: DockerEndpoint, containerID: String)
 }
 
 public enum ConnectionControlResponse: Codable, Sendable {
@@ -98,6 +101,9 @@ public enum ConnectionControlEvent: Codable, Sendable {
     case phase(hostID: UUID, SSHConnectionPhase)
     case prompt(ConnectionPromptEnvelope)
     case tunnelPhase(TunnelPhaseEvent)
+    case dockerInventory(DockerInventorySnapshot)
+    case hostStatus(HostStatusSnapshot)
+    case tunnelTraffic(TunnelTrafficSnapshot)
 }
 
 public enum ConnectionControlFrame: Codable, Sendable {

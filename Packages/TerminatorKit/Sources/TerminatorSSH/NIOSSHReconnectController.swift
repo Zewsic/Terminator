@@ -9,6 +9,31 @@ import TerminatorCore
 import TerminatorSecurity
 
 extension NIOSSHConnectionCoordinator {
+    func retain(host: HostProfile, prompting: any SSHConnectionPrompting) async {
+        retainedHosts.insert(host.id)
+        if pools[host.id]?.channel.isActive == true { return }
+        if reconnectTasks[host.id] != nil { return }
+        if let pending = prepareTasks[host.id] {
+            _ = try? await pending.value
+            if pools[host.id]?.channel.isActive == true || !retainedHosts.contains(host.id) || reconnectTasks[host.id] != nil {
+                return
+            }
+        }
+        reconnectTasks[host.id] = Task { [weak self] in
+            await self?.reconnect(host: host, prompting: prompting)
+        }
+    }
+
+    func isRetained(_ hostID: UUID) -> Bool { retainedHosts.contains(hostID) }
+
+    func isPoolActive(_ hostID: UUID) -> Bool { pools[hostID]?.channel.isActive == true }
+    func releaseRetention(_ hostID: UUID) {
+        retainedHosts.remove(hostID)
+        reconnectTasks[hostID]?.cancel()
+        reconnectTasks[hostID] = nil
+    }
+
+
     func transportClosed(hostID: UUID, error: Error?) async {
         guard let pool = pools[hostID], !pool.intentionalClose else { return }
         pools[hostID] = nil
@@ -41,9 +66,9 @@ extension NIOSSHConnectionCoordinator {
                     )
                     sessions[id] = session
                     await session.log.markReconnect()
-                    session.continuation.yield(.status("\r\n[Terminator: Reconnected]\r\n"))
+                    emit(.status("\r\n[Terminator: Reconnected]\r\n"), sessionID: id)
                 }
-                setPhase(.connected, for: host.id)
+                publishLink(for: host.id)
                 await resumeTunnels(touching: host.id)
                 reconnectTasks[host.id] = nil
                 return
@@ -62,9 +87,12 @@ extension NIOSSHConnectionCoordinator {
 
     func broadcastStatus(_ message: String, hostID: UUID) async {
         let data = Data(message.utf8)
-        for session in sessions.values where session.hostID == hostID {
-            session.continuation.yield(.status(message))
-            _ = await session.log.append(kind: .status, data: data)
+        let ids = sessions.filter { $0.value.hostID == hostID }.map(\.key)
+        for id in ids {
+            emit(.status(message), sessionID: id)
+            if let session = sessions[id] {
+                _ = await session.log.append(kind: .status, data: data)
+            }
         }
     }
 

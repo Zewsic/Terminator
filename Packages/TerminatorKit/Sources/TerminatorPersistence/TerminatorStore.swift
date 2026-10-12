@@ -7,6 +7,7 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
     case credentialNotFound
     case identityNotFound
     case tunnelNotFound
+    case snippetNotFound
     case historyEntryNotFound
     case unsupportedHistorySchema(Int)
     case secretPurgeIsIrreversible
@@ -21,6 +22,7 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
         case .credentialNotFound: TerminatorCoreLocalization.text("error.store.credentialNotFound")
         case .identityNotFound: TerminatorCoreLocalization.text("error.store.identityNotFound")
         case .tunnelNotFound: TerminatorCoreLocalization.text("error.store.tunnelNotFound")
+        case .snippetNotFound: TerminatorCoreLocalization.text("error.store.snippetNotFound")
         case .historyEntryNotFound: TerminatorCoreLocalization.text("error.store.historyEntryNotFound")
         case .unsupportedHistorySchema(let version): TerminatorCoreLocalization.text("error.store.unsupportedHistorySchema", version)
         case .secretPurgeIsIrreversible: TerminatorCoreLocalization.text("error.store.secretPurgeIsIrreversible")
@@ -33,7 +35,7 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
 }
 
 @ModelActor
-public actor TerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository, TunnelRepository {
+public actor TerminatorStore: HostRepository, CredentialRepository, IdentityRepository, HistoryRepository, KnownHostRepository, SessionLogRepository, TunnelRepository, SnippetRepository {
     var encoder: JSONEncoder { JSONEncoder() }
     var decoder: JSONDecoder { JSONDecoder() }
 }

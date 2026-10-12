@@ -56,4 +56,13 @@ extension TerminatorStore {
         try modelContext.save()
     }
 
+    public func purgeIdentity(id: UUID) throws {
+        guard let record = try fetchIdentity(id: id) else { throw PersistenceError.identityNotFound }
+        guard try identityReferenceCount(id: id) == 0 else { throw PersistenceError.identityInUse }
+        let before = record.domain
+        modelContext.delete(record)
+        try appendHistory(entity: .identity, entityID: id, operation: .purged, before: before, after: nil as IdentityProfile?)
+        try modelContext.save()
+    }
+
 }

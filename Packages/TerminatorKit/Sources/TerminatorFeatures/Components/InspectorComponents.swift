@@ -9,7 +9,7 @@ enum InspectorMetrics {
 }
 
 struct InspectorScreen<Content: View, Actions: View>: View {
-    let title: String
+    private let heading: AnyView
     @ViewBuilder let content: Content
     @ViewBuilder let actions: Actions
 
@@ -18,16 +18,28 @@ struct InspectorScreen<Content: View, Actions: View>: View {
         @ViewBuilder content: () -> Content,
         @ViewBuilder actions: () -> Actions
     ) {
-        self.title = title
+        heading = AnyView(
+            Text(title)
+                .font(.title2.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+        )
+        self.content = content()
+        self.actions = actions()
+    }
+
+    init<Heading: View>(
+        heading: Heading,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder actions: () -> Actions
+    ) {
+        self.heading = AnyView(heading)
         self.content = content()
         self.actions = actions()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(title)
-                .font(.title2.bold())
-                .frame(maxWidth: .infinity, alignment: .leading)
+            heading
                 .padding(.horizontal, InspectorMetrics.contentPadding)
                 .padding(.top, 18)
                 .padding(.bottom, 10)
@@ -219,6 +231,7 @@ struct InspectorActionArea<Content: View>: View {
 struct InspectorProminentAction: View {
     let title: String
     var disabled = false
+    var tint: Color = .blue
     let action: () -> Void
 
     var body: some View {
@@ -231,7 +244,37 @@ struct InspectorProminentAction: View {
         .controlSize(.large)
         .buttonStyle(.glassProminent)
         .buttonBorderShape(.capsule)
-        .tint(.blue)
+        .tint(tint)
+        .disabled(disabled)
+    }
+}
+
+extension View {
+    /// Large blue glass capsule for Add actions on empty catalog screens.
+    func emptyCatalogAddStyle() -> some View {
+        font(.body.weight(.semibold))
+            .buttonStyle(.glassProminent)
+            .buttonBorderShape(.capsule)
+            .tint(.blue)
+            .controlSize(.large)
+            .frame(minWidth: 220)
+    }
+}
+
+struct InspectorSecondaryAction: View {
+    let title: String
+    var disabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.body.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.blue)
         .disabled(disabled)
     }
 }

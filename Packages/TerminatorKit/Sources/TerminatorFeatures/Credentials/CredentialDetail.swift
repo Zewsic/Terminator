@@ -31,7 +31,9 @@ struct CredentialDetail: View {
                         }
                     }
                     Section(FeatureL10n.text(.credentialsPublicKey)) {
-                        Text(key.publicKey).font(.system(.caption, design: .monospaced)).textSelection(.enabled)
+                        Text(key.publicKey)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
                         Button(FeatureL10n.text(.credentialsCopyPublicKey), systemImage: "doc.on.doc") { copyToPasteboard(key.publicKey) }
                     }
                     if key.backend == .software {

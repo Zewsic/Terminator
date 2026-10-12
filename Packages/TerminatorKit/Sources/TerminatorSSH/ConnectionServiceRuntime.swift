@@ -17,19 +17,28 @@ public actor ConnectionServiceRuntime {
     private var promptWaiters: [UUID: CheckedContinuation<ConnectionPromptReply, any Error>] = [:]
     private var publishing: Set<UUID> = []
     private var headless: [UUID: HeadlessSession] = [:]
+    private let desiredWork: DesiredWorkStore
+    private let tunnelRepository: any TunnelRepository
+    private var dockerPoller: DockerPoller?
+    private var hostStatusPoller: HostStatusPoller?
+    private var trafficTask: Task<Void, Never>?
 
     public init(
         coordinator: NIOSSHConnectionCoordinator,
         broker: TerminalAttachBroker,
         hostRepository: any HostRepository,
         prompting: ConnectionServicePrompter,
-        terminalLauncher: any ConnectionTerminalLaunching
+        terminalLauncher: any ConnectionTerminalLaunching,
+        desiredWork: DesiredWorkStore,
+        tunnelRepository: any TunnelRepository
     ) {
         self.coordinator = coordinator
         self.broker = broker
         self.hostRepository = hostRepository
         self.prompting = prompting
         self.terminalLauncher = terminalLauncher
+        self.desiredWork = desiredWork
+        self.tunnelRepository = tunnelRepository
     }
 
     deinit {
@@ -41,6 +50,9 @@ public actor ConnectionServiceRuntime {
     }
 
     public func start() async throws {
+        await coordinator.setSessionClosedHandler { [broker] sessionID in
+            await broker.sessionClosed(sessionID)
+        }
         try FileManager.default.createDirectory(
             at: ConnectionServicePaths.applicationSupport, withIntermediateDirectories: true
         )
@@ -48,6 +60,7 @@ public actor ConnectionServiceRuntime {
             [.posixPermissions: 0o700], ofItemAtPath: ConnectionServicePaths.applicationSupport.path
         )
         try acquireServiceLock()
+        await coordinator.settleOrphanedLogs()
         let socketURL = ConnectionServicePaths.controlSocketURL
         try? FileManager.default.removeItem(at: socketURL)
         let bootstrap = ServerBootstrap(group: group)
@@ -60,6 +73,26 @@ public actor ConnectionServiceRuntime {
             }
         server = try await bootstrap.bind(unixDomainSocketPath: socketURL.path).get()
         _ = Darwin.chmod(socketURL.path, 0o600)
+        await restoreDesiredWork()
+        let poller = DockerPoller(coordinator: coordinator, hostRepository: hostRepository) { [weak self] snapshot in
+            await self?.publishDocker(snapshot)
+        }
+        dockerPoller = poller
+        await poller.start()
+        let status = HostStatusPoller(coordinator: coordinator) { [weak self] snapshot in
+            await self?.broadcast(.hostStatus(snapshot))
+        }
+        hostStatusPoller = status
+        await status.start()
+        trafficTask = Task { [weak self] in
+            while !Task.isCancelled {
+                let snapshots = await self?.coordinator.tunnelTrafficSnapshots() ?? []
+                for snapshot in snapshots {
+                    await self?.broadcast(.tunnelTraffic(snapshot))
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     public func waitUntilStopped() async throws {
@@ -92,6 +125,7 @@ public actor ConnectionServiceRuntime {
         case .subscribe:
             clients[ObjectIdentifier(channel)]?.subscribed = true
             write(.response(id: id, .ok), to: channel)
+            await replay(channel)
         case .connect(let hostID, let terminal):
             await prompting.bind(hostID: hostID)
             do {
@@ -176,12 +210,211 @@ public actor ConnectionServiceRuntime {
         case .stopTunnel(let tunnelID):
             await coordinator.stopForward(id: tunnelID)
             write(.response(id: id, .ok), to: channel)
+        case .prepare(let hostID):
+            do {
+                try await prepareHost(hostID)
+                write(.response(id: id, .ok), to: channel)
+            } catch {
+                write(.response(id: id, .failed(error.localizedDescription)), to: channel)
+            }
+        case .docker(let endpoint, let containerID, let action):
+            do {
+                let result = try await runDocker(endpoint: endpoint, containerID: containerID, action: action)
+                write(
+                    .response(id: id, .exec(stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode)),
+                    to: channel
+                )
+            } catch {
+                write(.response(id: id, .failed(error.localizedDescription)), to: channel)
+            }
+        case .containerShell(let endpoint, let containerID):
+            do {
+                try await openContainerShell(endpoint: endpoint, containerID: containerID)
+                write(.response(id: id, .ok), to: channel)
+            } catch {
+                write(.response(id: id, .failed(error.localizedDescription)), to: channel)
+            }
         }
     }
 
     public func publishTunnelPhase(id: UUID, phase: SSHConnectionPhase) {
         broadcast(.tunnelPhase(TunnelPhaseEvent(id: id, phase: phase)))
     }
+    private func publishDocker(_ snapshot: DockerInventorySnapshot) {
+        broadcast(.dockerInventory(snapshot))
+    }
+
+    private func runDocker(
+        endpoint: DockerEndpoint,
+        containerID: String,
+        action: DockerControlAction
+    ) async throws -> SSHExecResult {
+        let prefix = try await dockerPrefix(endpoint)
+        guard let command = DockerControl.command(prefix: prefix, action: action, containerID: containerID) else {
+            throw ConnectionServiceError.failed("Invalid container id")
+        }
+        let result = try await runShell(command, endpoint: endpoint)
+        if result.exitCode != 0, action != .logs, action != .stats {
+            let message = result.stderr.isEmpty ? result.stdout : result.stderr
+            throw ConnectionServiceError.failed(message.isEmpty ? "Docker command failed" : message)
+        }
+        return result
+    }
+
+    private func openContainerShell(endpoint: DockerEndpoint, containerID: String) async throws {
+        let prefix = try await dockerPrefix(endpoint)
+        guard let command = DockerControl.shellCommand(prefix: prefix, containerID: containerID) else {
+            throw ConnectionServiceError.failed("Invalid container id")
+        }
+        switch endpoint {
+        case .mac:
+            let script = """
+            export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+            \(command)
+            """
+            let apple = "tell application \"Terminal\" to do script \(shellQuote(script))"
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", apple]
+            try process.run()
+        case .host(let id, _):
+            guard let host = try await hostRepository.host(id: id), !host.isDeleted else {
+                throw ConnectionServiceError.hostNotFound
+            }
+            if await coordinator.isPoolActive(id) == false {
+                try await coordinator.prepare(host: host, prompting: prompting)
+            }
+            let descriptor = try await broker.createDescriptor(host: host, terminal: .terminal, remoteCommand: command)
+            let helper = try terminalLauncher.attachHelperURL()
+            let launch = await broker.command(for: descriptor, helperURL: helper)
+            try await terminalLauncher.launch(terminal: .terminal, command: launch, descriptor: descriptor)
+        }
+    }
+
+    private func dockerPrefix(_ endpoint: DockerEndpoint) async throws -> String {
+        switch endpoint {
+        case .mac:
+            return DockerCommandPrefix.fallback
+        case .host(let id, _):
+            guard let host = try await hostRepository.host(id: id), !host.isDeleted else {
+                throw ConnectionServiceError.hostNotFound
+            }
+            return host.dockerCommandPrefix
+        }
+    }
+
+    private func runShell(_ command: String, endpoint: DockerEndpoint) async throws -> SSHExecResult {
+        switch endpoint {
+        case .mac:
+            let script = """
+            export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+            \(command)
+            """
+            return await Task.detached {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                process.arguments = ["-c", script]
+                let output = Pipe()
+                let errors = Pipe()
+                process.standardOutput = output
+                process.standardError = errors
+                do { try process.run() } catch {
+                    return SSHExecResult(stdout: "", stderr: error.localizedDescription, exitCode: 1)
+                }
+                let stdout = output.fileHandleForReading.readDataToEndOfFile()
+                let stderr = errors.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                return SSHExecResult(
+                    stdout: String(decoding: stdout, as: UTF8.self),
+                    stderr: String(decoding: stderr, as: UTF8.self),
+                    exitCode: Int(process.terminationStatus)
+                )
+            }.value
+        case .host(let id, _):
+            guard let host = try await hostRepository.host(id: id), !host.isDeleted else {
+                throw ConnectionServiceError.hostNotFound
+            }
+            if await coordinator.isPoolActive(id) == false {
+                try await coordinator.prepare(host: host, prompting: prompting)
+            }
+            return try await coordinator.exec(host: host, command: command)
+        }
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+
+    private func prepareHost(_ hostID: UUID) async throws {
+        guard let host = try await hostRepository.host(id: hostID), !host.isDeleted else {
+            throw ConnectionServiceError.hostNotFound
+        }
+        if host.alwaysConnected {
+            await coordinator.retain(host: host, prompting: prompting)
+        } else {
+            await coordinator.releaseRetention(hostID)
+        }
+        observe(hostID)
+        try await coordinator.prepare(host: host, prompting: prompting)
+    }
+
+    private func observe(_ hostID: UUID) {
+        if publishing.insert(hostID).inserted {
+            Task { await publishStates(hostID: hostID) }
+        }
+    }
+
+    private func restoreDesiredWork() async {
+        let hosts = (try? await hostRepository.listHosts(includeDeleted: false)) ?? []
+        for host in hosts where host.alwaysConnected {
+            await coordinator.retain(host: host, prompting: prompting)
+            observe(host.id)
+        }
+        let work = await desiredWork.current()
+        let hostsByID = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
+        for terminal in work.terminals {
+            guard let host = hostsByID[terminal.hostID] else {
+                await desiredWork.removeTerminal(token: terminal.token)
+                continue
+            }
+            await broker.restoreDetached(terminal, host: host)
+        }
+        for id in work.tunnelIDs {
+            guard let tunnel = try? await tunnelRepository.tunnel(id: id), !tunnel.isDeleted else {
+                await desiredWork.removeTunnel(id)
+                continue
+            }
+            await restoreTunnel(tunnel)
+        }
+        let retained = await coordinator.retainedHostIDs()
+        let catalog = (try? await tunnelRepository.listTunnels(includeDeleted: false)) ?? []
+        for tunnel in catalog where tunnel.connectAutomatically && !work.tunnelIDs.contains(tunnel.id) {
+            let target = tunnel.kind == .local ? tunnel.destination : tunnel.source
+            guard case .saved(let hostID) = target, retained.contains(hostID) else { continue }
+            await restoreTunnel(tunnel)
+        }
+    }
+
+    private func restoreTunnel(_ tunnel: TunnelProfile) async {
+        do {
+            let tunnel = try tunnel.validated()
+            await retainSavedEndpoint(tunnel.source)
+            await retainSavedEndpoint(tunnel.destination)
+            try await coordinator.startForward(tunnel)
+        } catch {
+            await desiredWork.removeTunnel(tunnel.id)
+        }
+    }
+
+    private func retainSavedEndpoint(_ endpoint: TunnelEndpoint) async {
+        guard case .saved(let id) = endpoint,
+              let host = try? await hostRepository.host(id: id),
+              !host.isDeleted else { return }
+        await coordinator.retain(host: host, prompting: prompting)
+        observe(id)
+    }
+
 
     private func startTunnel(_ tunnel: TunnelProfile) async throws {
         let tunnel = try tunnel.validated()
@@ -340,7 +573,8 @@ public actor ConnectionServiceRuntime {
             throw ConnectionServiceError.hostNotFound
         }
         try await coordinator.prepare(host: host, prompting: prompting)
-        return try await coordinator.exec(host: host, command: command)
+        let timeout: Duration = command.contains("TERMINATOR_HELPER_") ? .seconds(300) : .seconds(6)
+        return try await coordinator.exec(host: host, command: command, timeout: timeout)
     }
 
     private func connectHeadless(hostID: UUID) async throws -> UUID {
@@ -408,6 +642,18 @@ public actor ConnectionServiceRuntime {
             try? await Task.sleep(for: .milliseconds(100))
         }
     }
+
+    private func replay(_ channel: Channel) async {
+        let phases = await coordinator.phaseSnapshot()
+        for (hostID, phase) in phases {
+            write(.event(.phase(hostID: hostID, phase)), to: channel)
+        }
+        let tunnels = await coordinator.tunnelPhaseSnapshot()
+        for (id, phase) in tunnels {
+            write(.event(.tunnelPhase(TunnelPhaseEvent(id: id, phase: phase))), to: channel)
+        }
+    }
+
 
     private func broadcast(_ event: ConnectionControlEvent) {
         for client in clients.values where client.subscribed {

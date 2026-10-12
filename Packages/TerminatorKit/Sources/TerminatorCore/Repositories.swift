@@ -6,6 +6,7 @@ public protocol HostRepository: Sendable {
     func saveHost(_ host: HostProfile) async throws
     func deleteHost(id: UUID) async throws
     func restoreHost(id: UUID) async throws
+    func purgeHost(id: UUID) async throws
 }
 
 public protocol CredentialRepository: Sendable {
@@ -21,6 +22,7 @@ public protocol IdentityRepository: Sendable {
     func saveIdentity(_ identity: IdentityProfile) async throws
     func deleteIdentity(id: UUID) async throws
     func restoreIdentity(id: UUID) async throws
+    func purgeIdentity(id: UUID) async throws
 }
 
 public protocol HistoryRepository: Sendable {
@@ -63,11 +65,24 @@ public extension KnownHostRepository {
     }
 }
 
+public protocol SnippetRepository: Sendable {
+    func listSnippets(includeDeleted: Bool) async throws -> [SnippetProfile]
+    func snippet(id: UUID) async throws -> SnippetProfile?
+    func saveSnippet(_ snippet: SnippetProfile) async throws
+    func deleteSnippet(id: UUID) async throws
+    func restoreSnippet(id: UUID) async throws
+    func purgeSnippet(id: UUID) async throws
+    func noteSnippetUsed(id: UUID) async throws
+    func importSnippet(_ snippet: SnippetProfile) async throws
+}
+
 public protocol TunnelRepository: Sendable {
     func listTunnels(includeDeleted: Bool) async throws -> [TunnelProfile]
     func tunnel(id: UUID) async throws -> TunnelProfile?
     func saveTunnel(_ tunnel: TunnelProfile) async throws
     func deleteTunnel(id: UUID) async throws
+    func restoreTunnel(id: UUID) async throws
+    func purgeTunnel(id: UUID) async throws
 }
 
 public protocol SessionLogRepository: Sendable {

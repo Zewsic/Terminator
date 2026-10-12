@@ -124,7 +124,9 @@ extension TerminatorAppModel {
         draft.notes = existing?.notes ?? ""
         let saved = await saveHost(draft)
         if saved {
-            openSSHResultMessage = existing == nil ? "Host imported." : "Host updated from OpenSSH."
+            if !suppressesImportAnnouncements {
+                openSSHResultMessage = existing == nil ? "Host imported." : "Host updated from OpenSSH."
+            }
             await refreshOpenSSH()
         }
         return saved

@@ -69,7 +69,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
     public var sessionPersistence: SessionPersistence
     public var remoteShell: RemoteShell
     public var connectCommands: String
+    public var connectCommandSegments: [ConnectCommandSegment]
     public var detectedOS: DetectedHostOS?
+    public var alwaysConnected: Bool
+    public var dockerCommandPrefix: String
     public var createdAt: Date
     public var updatedAt: Date
     public var deletedAt: Date?
@@ -86,7 +89,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         sessionPersistence: SessionPersistence = .none,
         remoteShell: RemoteShell = .login,
         connectCommands: String = "",
+        connectCommandSegments: [ConnectCommandSegment] = [],
         detectedOS: DetectedHostOS? = nil,
+        alwaysConnected: Bool = false,
+        dockerCommandPrefix: String = DockerCommandPrefix.fallback,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         deletedAt: Date? = nil
@@ -102,7 +108,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         self.sessionPersistence = sessionPersistence
         self.remoteShell = remoteShell
         self.connectCommands = connectCommands
+        self.connectCommandSegments = connectCommandSegments
         self.detectedOS = detectedOS
+        self.alwaysConnected = alwaysConnected
+        self.dockerCommandPrefix = dockerCommandPrefix
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.deletedAt = deletedAt
@@ -122,6 +131,9 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         sessionPersistence: SessionPersistence = .none,
         remoteShell: RemoteShell = .login,
         connectCommands: String = "",
+        connectCommandSegments: [ConnectCommandSegment] = [],
+        alwaysConnected: Bool = false,
+        dockerCommandPrefix: String = DockerCommandPrefix.fallback,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         deletedAt: Date? = nil
@@ -141,7 +153,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
             sessionPersistence: sessionPersistence,
             remoteShell: remoteShell,
             connectCommands: connectCommands,
+            connectCommandSegments: connectCommandSegments,
             detectedOS: nil,
+            alwaysConnected: alwaysConnected,
+            dockerCommandPrefix: dockerCommandPrefix,
             createdAt: createdAt,
             updatedAt: updatedAt,
             deletedAt: deletedAt
@@ -158,7 +173,8 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, displayName, hostname, port, authentication, username, credentialID
-        case group, tags, notes, sessionPersistence, remoteShell, connectCommands, detectedOS, createdAt, updatedAt, deletedAt
+        case group, tags, notes, sessionPersistence, remoteShell, connectCommands, connectCommandSegments, detectedOS
+        case alwaysConnected, dockerCommandPrefix, createdAt, updatedAt, deletedAt
     }
 
     public init(from decoder: any Decoder) throws {
@@ -183,7 +199,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         sessionPersistence = try container.decodeIfPresent(SessionPersistence.self, forKey: .sessionPersistence) ?? .none
         remoteShell = try container.decodeIfPresent(RemoteShell.self, forKey: .remoteShell) ?? .login
         connectCommands = try container.decodeIfPresent(String.self, forKey: .connectCommands) ?? ""
+        connectCommandSegments = try container.decodeIfPresent([ConnectCommandSegment].self, forKey: .connectCommandSegments) ?? []
         detectedOS = try container.decodeIfPresent(DetectedHostOS.self, forKey: .detectedOS)
+        alwaysConnected = try container.decodeIfPresent(Bool.self, forKey: .alwaysConnected) ?? false
+        dockerCommandPrefix = try container.decodeIfPresent(String.self, forKey: .dockerCommandPrefix) ?? DockerCommandPrefix.fallback
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
@@ -202,7 +221,10 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
         try container.encode(sessionPersistence, forKey: .sessionPersistence)
         try container.encode(remoteShell, forKey: .remoteShell)
         try container.encode(connectCommands, forKey: .connectCommands)
+        try container.encode(connectCommandSegments, forKey: .connectCommandSegments)
         try container.encodeIfPresent(detectedOS, forKey: .detectedOS)
+        try container.encode(alwaysConnected, forKey: .alwaysConnected)
+        try container.encode(dockerCommandPrefix, forKey: .dockerCommandPrefix)
         try container.encode(createdAt, forKey: .createdAt)
         try container.encode(updatedAt, forKey: .updatedAt)
         try container.encodeIfPresent(deletedAt, forKey: .deletedAt)
@@ -234,6 +256,7 @@ public struct HostProfile: Codable, Hashable, Identifiable, Sendable {
             }
             copy.authentication = .manual(username: username, authenticationMethods: methods)
         }
+        copy.dockerCommandPrefix = try DockerCommandPrefix.normalize(copy.dockerCommandPrefix)
         return copy
     }
 }
@@ -246,6 +269,7 @@ public enum HostValidationError: LocalizedError, Equatable, Sendable {
     case duplicateAuthenticationMethod
     case referencedIdentityUnavailable
     case referencedCredentialUnavailable
+    case invalidDockerCommandPrefix
 
     public var errorDescription: String? {
         switch self {
@@ -256,10 +280,11 @@ public enum HostValidationError: LocalizedError, Equatable, Sendable {
         case .duplicateAuthenticationMethod: TerminatorCoreLocalization.text(.errorCredentialDuplicateAuthenticationMethod)
         case .referencedIdentityUnavailable: TerminatorCoreLocalization.text(.errorHostReferencedIdentityUnavailable)
         case .referencedCredentialUnavailable: TerminatorCoreLocalization.text(.errorHostReferencedCredentialUnavailable)
+        case .invalidDockerCommandPrefix: TerminatorCoreLocalization.text(.errorHostInvalidDockerCommandPrefix)
         }
     }
 }
 
-private extension String {
+public extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
 }

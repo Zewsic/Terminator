@@ -42,6 +42,25 @@ extension TerminatorStore {
         try modelContext.save()
     }
 
+    public func restoreTunnel(id: UUID) throws {
+        guard let record = try fetchTunnel(id: id) else { throw PersistenceError.tunnelNotFound }
+        let before = record.domain
+        var after = before
+        after.deletedAt = nil
+        after.updatedAt = .now
+        record.apply(after)
+        try appendHistory(entity: .tunnel, entityID: id, operation: .restored, before: before, after: after)
+        try modelContext.save()
+    }
+
+    public func purgeTunnel(id: UUID) throws {
+        guard let record = try fetchTunnel(id: id) else { throw PersistenceError.tunnelNotFound }
+        let before = record.domain
+        modelContext.delete(record)
+        try appendHistory(entity: .tunnel, entityID: id, operation: .purged, before: before, after: nil as TunnelProfile?)
+        try modelContext.save()
+    }
+
     func persistTunnel(_ tunnel: TunnelProfile) throws {
         if let existing = try fetchTunnel(id: tunnel.id) { existing.apply(tunnel) }
         else { modelContext.insert(TunnelRecord(profile: tunnel)) }

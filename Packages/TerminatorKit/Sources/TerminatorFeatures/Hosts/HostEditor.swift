@@ -9,7 +9,10 @@ struct HostEditor: View {
     @State private var revealPassword = false
     @State private var isConnectionExpanded = true
     @State private var isOrganizationExpanded = true
+    @State private var isAdditionalExpanded = false
     @State private var isLoadingStoredPassword: Bool
+    @State private var pane: HostEditorPane = .edit
+    @State private var showsHelperInstall = false
     let explicitImport: Bool
     let onSave: @MainActor (HostDraft) async -> Bool
     let onClose: @MainActor () -> Void
@@ -32,7 +35,16 @@ struct HostEditor: View {
     }
 
     var body: some View {
-        InspectorScreen(title: editorTitle) {
+        InspectorScreen(heading: screenHeading) {
+            if showsStatus, pane == .status {
+                HostStatusPane(
+                    name: draft.displayName.isEmpty ? draft.hostname : draft.displayName,
+                    snapshot: liveStatus,
+                    helper: helperState,
+                    onInstall: { showsHelperInstall = true }
+                )
+            }
+            if !showsStatus || pane != .status {
             InspectorFieldGroup {
                 InspectorFieldRow(FeatureL10n.text(.featureHostEditorDisplayName)) {
                     TextField(FeatureL10n.text(.featureHostEditorDisplayName), text: $draft.displayName)
@@ -80,6 +92,12 @@ struct HostEditor: View {
 
             InspectorCollapsibleSection(FeatureL10n.text(.hostConnection), isExpanded: $isConnectionExpanded) {
                 InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.hostAlwaysConnected)) {
+                        Toggle("", isOn: $draft.alwaysConnected)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                    }
+                    InspectorGroupDivider()
                     InspectorFieldRow(FeatureL10n.text(.hostSessionPersistence)) {
                         InspectorValueMenu(title: sessionTitle) {
                             Button(FeatureL10n.text(.hostSessionPersistenceNone)) { draft.sessionPersistence = .none }
@@ -119,15 +137,7 @@ struct HostEditor: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(FeatureL10n.text(.hostConnectCommands))
                             .fontWeight(.medium)
-                        TextField(
-                            FeatureL10n.text(.hostConnectCommands),
-                            text: $draft.connectCommands,
-                            prompt: Text(FeatureL10n.text(.hostConnectCommandsPrompt)),
-                            axis: .vertical
-                        )
-                        .textFieldStyle(.plain)
-                        .lineLimit(3...12)
-                        .font(.body.monospaced())
+                        ConnectCommandEditor(segments: $draft.connectCommandSegments, snippets: model.snippets)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -167,6 +177,18 @@ struct HostEditor: View {
                     .padding(.vertical, 10)
                 }
             }
+
+            InspectorCollapsibleSection(FeatureL10n.text(.hostAdditional), isExpanded: $isAdditionalExpanded) {
+                InspectorFieldGroup {
+                    InspectorFieldRow(FeatureL10n.text(.hostDockerCommandPrefix)) {
+                        TextField(DockerCommandPrefix.fallback, text: $draft.dockerCommandPrefix)
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .font(.body.monospaced())
+                    }
+                }
+            }
+            }
         } actions: {
             editorActions
         }
@@ -194,6 +216,17 @@ struct HostEditor: View {
             originalDraft = draft
             isLoadingStoredPassword = false
         }
+        .onChange(of: showsStatus) { _, connected in
+            pane = connected ? .status : .edit
+        }
+        .task {
+            if showsStatus { pane = .status }
+        }
+        .sheet(isPresented: $showsHelperInstall) {
+            if let host = persistedHost {
+                HelperInstallSheet(host: host)
+            }
+        }
     }
 
     private var selectedAccessKeyIDs: Set<UUID> {
@@ -210,6 +243,77 @@ struct HostEditor: View {
     private var persistedHost: HostProfile? {
         guard let id = draft.id else { return nil }
         return model.hosts.first { $0.id == id }
+    }
+
+    @ViewBuilder
+    private var screenHeading: some View {
+        if draft.id != nil {
+            InspectorSegmentedSelector(
+                selection: $pane,
+                options: headingOptions,
+                style: .joined
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(editorTitle)
+                .font(.title2.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var headingOptions: [InspectorSelectorOption<HostEditorPane>] {
+        var options: [InspectorSelectorOption<HostEditorPane>] = []
+        if showsStatus {
+            options.append(InspectorSelectorOption(value: .status, title: FeatureL10n.text(.hostStatus)))
+        }
+        options.append(InspectorSelectorOption(value: .edit, title: FeatureL10n.text(.hostPane)))
+        return options
+    }
+
+    private var showsStatus: Bool {
+        guard let id = draft.id else { return false }
+        if model.isHelperOnline(id) { return true }
+        switch model.connectionPhase(for: id) {
+        case .connected, .agent, .reconnecting: return true
+        default: return false
+        }
+    }
+
+    private var offersHelperInstall: Bool {
+        guard let host = persistedHost else { return false }
+        return model.canInstallHelper(host)
+    }
+
+    private var dockerMissing: Bool {
+        guard let host = persistedHost else { return false }
+        return model.isDockerMissing(host)
+    }
+
+    private var helperState: HostHelperState {
+        guard let id = draft.id,
+              let installation = model.helperInstallations.first(where: { $0.hostID == id }) else {
+            return HostHelperState(
+                installed: false,
+                version: nil,
+                online: false,
+                canInstall: offersHelperInstall,
+                dockerMissing: dockerMissing,
+                updating: false
+            )
+        }
+        return HostHelperState(
+            installed: true,
+            version: installation.version,
+            online: model.isHelperOnline(id),
+            canInstall: false,
+            dockerMissing: false,
+            updating: model.helperUpdating.contains(id)
+        )
+    }
+
+    private var liveStatus: HostStatusSnapshot? {
+        guard let id = draft.id else { return nil }
+        return model.hostStatuses[id]
     }
 
     private enum AuthenticationChoice: Hashable {
@@ -373,31 +477,30 @@ struct HostEditor: View {
                 }
                 .keyboardShortcut(.defaultAction)
             }
-        } else if hasChanges || canConnect {
+        } else if hasChanges {
             InspectorActionArea {
-                if hasChanges {
-                    InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
-                        draft = originalDraft
-                        revealPassword = false
-                    }
+                InspectorProminentAction(title: FeatureL10n.text(.actionSave), disabled: !canConnectNow) {
+                    Task { await saveDraft() }
                 }
-                if canConnect {
-                    HStack(spacing: 8) {
-                        InspectorProminentAction(title: connectTitle, disabled: !canConnectNow) {
-                            connect(using: .terminal)
-                        }
-                        .keyboardShortcut(.defaultAction)
-                        InspectorCircleMenu(disabled: !canConnectNow) {
-                            if let host = persistedHost, !model.connectionPhase(for: host.id).isDisconnected {
-                                Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
-                                    Task { await model.disconnect(host) }
-                                }
-                                Divider()
-                            }
-                            connectionDestinations
-                        }
-                        .accessibilityLabel(FeatureL10n.text(.hostsConnectWith))
+                .keyboardShortcut(.defaultAction)
+            }
+        } else if canConnect {
+            InspectorActionArea {
+                HStack(spacing: 8) {
+                    InspectorProminentAction(title: FeatureL10n.text(.featureHostEditorConnect), disabled: !canConnectNow) {
+                        connect(using: .terminal)
                     }
+                    .keyboardShortcut(.defaultAction)
+                    InspectorCircleMenu(disabled: !canConnectNow) {
+                        if let host = persistedHost, !model.connectionPhase(for: host.id).isDisconnected {
+                            Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
+                                Task { await model.disconnect(host) }
+                            }
+                            Divider()
+                        }
+                        connectionDestinations
+                    }
+                    .accessibilityLabel(FeatureL10n.text(.hostsConnectWith))
                 }
             }
         }
@@ -405,10 +508,6 @@ struct HostEditor: View {
 
     private var editorTitle: String {
         draft.id == nil ? FeatureL10n.text(.hostsAddHost) : FeatureL10n.text(.featureHostEditorEdit)
-    }
-
-    private var connectTitle: String {
-        hasChanges ? FeatureL10n.text(.featureHostEditorSaveAndConnect) : FeatureL10n.text(.featureHostEditorConnect)
     }
 
     private var authenticationTitle: String {
@@ -511,12 +610,16 @@ struct HostEditor: View {
         !draft.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private func saveDraft() async {
+        if draft.id == nil { draft.id = UUID() }
+        guard await onSave(draft) else { return }
+        originalDraft = draft
+    }
+
     private func connect(using terminal: TerminalApplication) {
         Task {
-            guard await onSave(draft),
-                  let hostID = draft.id,
+            guard let hostID = draft.id,
                   let host = model.hosts.first(where: { $0.id == hostID }) else { return }
-            originalDraft = draft
             await model.connect(host, with: terminal)
         }
     }

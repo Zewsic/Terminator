@@ -42,6 +42,10 @@ actor MacExternalTerminalService: ExternalTerminalConnecting {
     func exec(host: HostProfile, command: String) async throws -> SSHExecResult {
         try await client.exec(host: host, command: command)
     }
+    func prepare(hostID: UUID) async throws {
+        try await client.prepare(hostID: hostID)
+    }
+
 }
 
 #endif

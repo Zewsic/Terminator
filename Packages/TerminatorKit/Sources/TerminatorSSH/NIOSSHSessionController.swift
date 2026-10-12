@@ -13,7 +13,8 @@ extension NIOSSHConnectionCoordinator {
         host: HostProfile,
         terminal: TerminalApplication,
         size: TerminalSize,
-        persistence: SessionPersistence
+        persistence: SessionPersistence,
+        command: String? = nil
     ) async throws -> SSHSessionHandle {
         guard let pool = pools[host.id], pool.channel.isActive else { throw SSHTransportError.sessionUnavailable }
         let id = UUID()
@@ -23,7 +24,7 @@ extension NIOSSHConnectionCoordinator {
             secretStore: secretStore, baseURL: logBaseURL
         )
         do {
-            let remoteCommand = SessionLaunchCommand.remoteCommand(
+            let remoteCommand = command ?? SessionLaunchCommand.remoteCommand(
                 sessionID: id,
                 persistence: persistence,
                 connectCommands: host.connectCommands,
@@ -36,7 +37,7 @@ extension NIOSSHConnectionCoordinator {
                 hostID: host.id, terminal: terminal, size: size, remoteCommand: remoteCommand, channel: child,
                 continuation: continuation, log: log
             )
-            setPhase(.connected, for: host.id)
+            publishLink(for: host.id)
             let logID = await log.metadata.id
             return SSHSessionHandle(
                 id: id, logID: logID, events: stream,
@@ -80,6 +81,8 @@ extension NIOSSHConnectionCoordinator {
         reconnectTasks[hostID] = nil
         let ids = sessions.filter { $0.value.hostID == hostID }.map(\.key)
         for id in ids { await closeSession(id: id) }
+        await closeDockerShell(hostID: hostID)
+        await desiredWork?.removeTerminals(hostID: hostID)
         if let pool = pools.removeValue(forKey: hostID) {
             pool.intentionalClose = true
             try? await pool.channel.close().get()
@@ -179,8 +182,9 @@ extension NIOSSHConnectionCoordinator {
     }
 
     func receive(_ event: SSHSessionEvent, sessionID: UUID) async {
+        guard sessions[sessionID] != nil else { return }
+        emit(event, sessionID: sessionID)
         guard let session = sessions[sessionID] else { return }
-        session.continuation.yield(event)
         let logged: Bool
         switch event {
         case .stdout(let data): logged = await session.log.append(kind: .stdout, data: data)
@@ -189,12 +193,33 @@ extension NIOSSHConnectionCoordinator {
         case .exited: logged = true
         }
         if !logged {
-            session.continuation.yield(.status("\r\n[Terminator: session logging failed; this log is incomplete]\r\n"))
+            emit(.status("\r\n[Terminator: session logging failed; this log is incomplete]\r\n"), sessionID: sessionID)
         }
     }
 
-    func channelClosed(sessionID: UUID, exitedNormally: Bool) async {
+    func emit(_ event: SSHSessionEvent, sessionID: UUID) {
         guard let session = sessions[sessionID] else { return }
+        session.continuation.yield(event)
+        for listener in session.listeners.values { listener.yield(event) }
+    }
+
+    func subscribe(sessionID: UUID) -> (UUID, AsyncStream<SSHSessionEvent>)? {
+        guard var session = sessions[sessionID] else { return nil }
+        let listenerID = UUID()
+        let (stream, continuation) = AsyncStream<SSHSessionEvent>.makeStream()
+        session.listeners[listenerID] = continuation
+        sessions[sessionID] = session
+        return (listenerID, stream)
+    }
+
+    func unsubscribe(sessionID: UUID, listenerID: UUID) {
+        guard var session = sessions[sessionID] else { return }
+        session.listeners.removeValue(forKey: listenerID)?.finish()
+        sessions[sessionID] = session
+    }
+
+    func channelClosed(sessionID: UUID, exitedNormally: Bool) async {
+        guard sessions[sessionID] != nil else { return }
         if exitedNormally {
             await closeSession(id: sessionID)
             return
@@ -203,12 +228,13 @@ extension NIOSSHConnectionCoordinator {
         // notification is guaranteed to reach this actor. Give that notification
         // one event-loop turn, then retain the logical session for reconnect.
         try? await Task.sleep(for: .milliseconds(100))
+        guard let session = sessions[sessionID] else { return }
+        // The child channel is gone. Reconnect restores the transport, not this
+        // shell, so the log must not stay active until the next launch.
+        await session.log.finish(as: .incomplete)
         if pools[session.hostID]?.channel.isActive != true {
             return
         }
-        // An interactive shell disappearing without an exit-status is a channel
-        // failure, not a user exit. Closing the pooled transport gives every
-        // attached channel the same reconnect path and prevents a dead renderer.
         if let pool = pools[session.hostID], !pool.intentionalClose {
             try? await pool.channel.close().get()
         }
@@ -219,10 +245,19 @@ extension NIOSSHConnectionCoordinator {
         if session.channel.isActive { try? await session.channel.close().get() }
         await session.log.finish()
         session.continuation.finish()
-        // Closing the last attached terminal must not tear down the pooled
-        // SSH transport. Connections stay until an explicit disconnect.
+        for listener in session.listeners.values { listener.finish() }
+        await sessionClosedHandler?(id)
         if retainedHosts.contains(session.hostID), pools[session.hostID]?.channel.isActive == true {
-            setPhase(.connected, for: session.hostID)
+            publishLink(for: session.hostID)
+        }
+    }
+
+    /// `.connected` while an interactive session exists, `.agent` while only the transport is up.
+    func publishLink(for hostID: UUID) {
+        if sessions.contains(where: { $0.value.hostID == hostID }) {
+            setPhase(.connected, for: hostID)
+        } else if pools[hostID]?.channel.isActive == true {
+            setPhase(.agent, for: hostID)
         }
     }
 
@@ -246,17 +281,16 @@ extension NIOSSHConnectionCoordinator {
     }
 
     public func exec(host: HostProfile, command: String) async throws -> SSHExecResult {
+        try await exec(host: host, command: command, timeout: .seconds(6))
+    }
+
+    public func exec(host: HostProfile, command: String, timeout: Duration, partialOnTimeout: Bool = false) async throws -> SSHExecResult {
         guard let pool = pools[host.id], pool.channel.isActive else {
             throw SSHTransportError.sessionUnavailable
         }
         let collector = ExecCollector()
         let child = try await createExecChannel(transport: pool.channel, command: command, collector: collector)
-        do {
-            return try await collector.value(timeout: .seconds(6), channel: child)
-        } catch {
-            if child.isActive { try? await child.close().get() }
-            throw error
-        }
+        return try await collector.value(timeout: timeout, channel: child, partialOnTimeout: partialOnTimeout)
     }
 
     func createExecChannel(
@@ -277,10 +311,10 @@ extension NIOSSHConnectionCoordinator {
                         onEvent: { event in
                             collector.append(event)
                             if case .exited(let code) = event {
-                                collector.complete(exitCode: code ?? 0)
+                                collector.noteExit(code ?? 0)
                             }
                         },
-                        onClose: { _ in collector.complete(exitCode: 0) }
+                        onClose: { _ in collector.noteExit(0) }
                     )
                     return channel.pipeline.addHandler(bridge).flatMap { _ in
                         channel.setOption(ChannelOptions.allowRemoteHalfClosure, value: true)
@@ -297,6 +331,7 @@ final class ExecCollector: @unchecked Sendable {
     private let lock = NSLock()
     private var stdout = Data()
     private var stderr = Data()
+    private var notedExit: Int?
     private var continuation: CheckedContinuation<SSHExecResult, Error>?
     private var result: Result<SSHExecResult, Error>?
 
@@ -317,12 +352,27 @@ final class ExecCollector: @unchecked Sendable {
         }
     }
 
+    func noteExit(_ code: Int) {
+        lock.lock()
+        if notedExit != nil {
+            lock.unlock()
+            return
+        }
+        notedExit = code
+        lock.unlock()
+        Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            self.complete(exitCode: code)
+        }
+    }
+
     func complete(exitCode: Int) {
         lock.lock()
+        let code = notedExit ?? exitCode
         let value = SSHExecResult(
             stdout: String(decoding: stdout, as: UTF8.self),
             stderr: String(decoding: stderr, as: UTF8.self),
-            exitCode: exitCode
+            exitCode: code
         )
         lock.unlock()
         finish(.success(value))
@@ -332,11 +382,16 @@ final class ExecCollector: @unchecked Sendable {
         finish(.failure(error))
     }
 
-    func value(timeout: Duration, channel: Channel) async throws -> SSHExecResult {
+    func value(timeout: Duration, channel: Channel, partialOnTimeout: Bool = false) async throws -> SSHExecResult {
         try await withThrowingTaskGroup(of: SSHExecResult.self) { group in
             group.addTask { try await self.waitForResult() }
             group.addTask {
                 try await Task.sleep(for: timeout)
+                if partialOnTimeout {
+                    let partial = self.partial(exitCode: 124)
+                    if channel.isActive { try? await channel.close().get() }
+                    return partial
+                }
                 self.fail(SSHTransportError.sessionUnavailable)
                 if channel.isActive { try? await channel.close().get() }
                 throw SSHTransportError.sessionUnavailable
@@ -345,6 +400,22 @@ final class ExecCollector: @unchecked Sendable {
             group.cancelAll()
             return value
         }
+    }
+
+    private func partial(exitCode: Int) -> SSHExecResult {
+        lock.lock()
+        let value = SSHExecResult(
+            stdout: String(decoding: stdout, as: UTF8.self),
+            stderr: String(decoding: stderr, as: UTF8.self),
+            exitCode: exitCode
+        )
+        lock.unlock()
+        finish(.success(value))
+        lock.lock()
+        let stored = result
+        lock.unlock()
+        if case .success(let final) = stored { return final }
+        return value
     }
 
     private func waitForResult() async throws -> SSHExecResult {
@@ -370,6 +441,7 @@ final class ExecCollector: @unchecked Sendable {
         let pending = continuation
         continuation = nil
         lock.unlock()
-        pending?.resume(with: outcome)
+        guard let pending else { return }
+        Task { pending.resume(with: outcome) }
     }
 }

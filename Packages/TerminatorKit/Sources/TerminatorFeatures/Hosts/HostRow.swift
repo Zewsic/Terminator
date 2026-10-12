@@ -59,6 +59,7 @@ struct HostCard: View {
     private var statusColor: Color? {
         switch phase {
         case .connected: .green
+        case .agent: .blue
         case .resolving, .verifyingHost, .authenticating, .reconnecting, .waitingForUser: .yellow
         case .failed: .red
         case .disconnected: nil

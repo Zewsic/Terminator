@@ -12,20 +12,23 @@ extension NIOSSHConnectionCoordinator {
     func startForward(_ tunnel: TunnelProfile) async throws {
         let tunnel = try tunnel.validated()
         _ = try TunnelForwardPlan.make(tunnel)
+        if desiredTunnels[tunnel.id] != nil { return }
         desiredTunnels[tunnel.id] = tunnel
+        await desiredWork?.addTunnel(tunnel.id)
         do {
             try await openForward(tunnel)
+            cancelTunnelRetry(tunnel.id)
         } catch {
-            desiredTunnels[tunnel.id] = nil
-            await teardownForward(tunnel.id)
             reportTunnel(tunnel.id, .failed(message: error.localizedDescription))
-            throw error
+            scheduleTunnelRetry(tunnel.id)
         }
     }
 
     func stopForward(id: UUID) async {
+        cancelTunnelRetry(id)
         desiredTunnels[id] = nil
         await teardownForward(id)
+        await desiredWork?.removeTunnel(id)
         reportTunnel(id, .disconnected)
     }
 
@@ -39,12 +42,62 @@ extension NIOSSHConnectionCoordinator {
 
     func resumeTunnels(touching hostID: UUID) async {
         for (id, tunnel) in desiredTunnels where tunnel.usesPool(hostID) && runningTunnels[id] == nil {
+            guard poolsReady(tunnel) else {
+                scheduleTunnelRetry(id)
+                continue
+            }
             do {
                 try await openForward(tunnel)
+                cancelTunnelRetry(id)
             } catch {
                 reportTunnel(id, .failed(message: error.localizedDescription))
+                scheduleTunnelRetry(id)
             }
         }
+    }
+
+    func poolsReady(_ tunnel: TunnelProfile) -> Bool {
+        let hostIDs = [tunnel.source.poolHostID, tunnel.destination.poolHostID].compactMap { $0 }
+        return hostIDs.allSatisfy { retainedHosts.contains($0) && pools[$0]?.channel.isActive == true }
+    }
+
+    func scheduleTunnelRetry(_ id: UUID) {
+        guard tunnelRetryTasks[id] == nil else { return }
+        tunnelRetryTasks[id] = Task { [weak self] in
+            var attempt = 0
+            while !Task.isCancelled {
+                guard let self else { return }
+                attempt += 1
+                let seconds = min(30.0, pow(2.0, Double(min(attempt - 1, 5))))
+                try? await Task.sleep(for: .seconds(seconds + Double.random(in: 0 ... 0.5)))
+                if Task.isCancelled { return }
+                guard let tunnel = await self.desiredTunnel(id) else {
+                    await self.cancelTunnelRetry(id)
+                    return
+                }
+                guard await self.poolsReady(tunnel) else { continue }
+                if await self.tunnelIsRunning(id) {
+                    await self.cancelTunnelRetry(id)
+                    return
+                }
+                do {
+                    try await self.openForward(tunnel)
+                    await self.cancelTunnelRetry(id)
+                    return
+                } catch {
+                    await self.reportTunnel(id, .failed(message: error.localizedDescription))
+                }
+            }
+        }
+    }
+
+    func desiredTunnel(_ id: UUID) -> TunnelProfile? { desiredTunnels[id] }
+    func tunnelIsRunning(_ id: UUID) -> Bool { runningTunnels[id] != nil }
+
+
+    func cancelTunnelRetry(_ id: UUID) {
+        tunnelRetryTasks[id]?.cancel()
+        tunnelRetryTasks[id] = nil
     }
 
     func stopTunnels(touching hostID: UUID) async {
@@ -55,13 +108,14 @@ extension NIOSSHConnectionCoordinator {
     func openForward(_ tunnel: TunnelProfile) async throws {
         let plan = try TunnelForwardPlan.make(tunnel)
         let children = TunnelChannelSet()
+        let meter = TunnelTrafficMeter()
         switch plan {
         case .listenLocally(let address, let port, let dial):
             let listener = try await bindLocal(address: address, port: port) { [weak self] channel in
                 guard let self else {
                     return channel.eventLoop.makeFailedFuture(SSHTransportError.sessionUnavailable)
                 }
-                return self.acceptLocal(channel, dial: dial, children: children)
+                return self.acceptLocal(channel, dial: dial, children: children, meter: meter)
             }
             runningTunnels[tunnel.id] = RunningTunnel(listener: listener, remote: nil, children: children)
         case .listenRemotely(let listener, let address, let port, let dial):
@@ -71,7 +125,7 @@ extension NIOSSHConnectionCoordinator {
                 guard let self else {
                     return channel.eventLoop.makeFailedFuture(SSHTransportError.sessionUnavailable)
                 }
-                return self.acceptForwarded(channel, dial: dial, children: children)
+                return self.acceptForwarded(channel, dial: dial, children: children, meter: meter)
             }
             do {
                 try await requestForward(hostID: hostID, host: address, port: port, cancel: false)
@@ -85,10 +139,12 @@ extension NIOSSHConnectionCoordinator {
                 children: children
             )
         }
+        tunnelMeters[tunnel.id] = meter
         reportTunnel(tunnel.id, .connected)
     }
 
     func teardownForward(_ id: UUID) async {
+        tunnelMeters[id] = nil
         guard let running = runningTunnels.removeValue(forKey: id) else { return }
         if let remote = running.remote {
             let key = TunnelForwardRouter.Key(hostID: remote.hostID, host: remote.host.lowercased(), port: remote.port)
@@ -102,6 +158,7 @@ extension NIOSSHConnectionCoordinator {
     }
 
     func reportTunnel(_ id: UUID, _ phase: SSHConnectionPhase) {
+        reportedTunnelPhases[id] = phase
         tunnelPhaseHandler?(id, phase)
     }
 
@@ -115,11 +172,11 @@ extension NIOSSHConnectionCoordinator {
             .childChannelInitializer(child)
         return try await bootstrap.bind(host: address, port: port).get()
     }
-
     nonisolated func acceptLocal(
         _ channel: Channel,
         dial: TunnelForwardPlan.Dial,
-        children: TunnelChannelSet
+        children: TunnelChannelSet,
+        meter: TunnelTrafficMeter
     ) -> EventLoopFuture<Void> {
         let promise = channel.eventLoop.makePromise(of: Void.self)
         children.add(channel)
@@ -127,9 +184,9 @@ extension NIOSSHConnectionCoordinator {
             do {
                 switch dial {
                 case .socks(let through):
-                    try await self.installSOCKS(on: channel, through: through, children: children)
+                    try await self.installSOCKS(on: channel, through: through, children: children, meter: meter)
                 default:
-                    try await self.completeDial(dial, peer: channel, children: children)
+                    try await self.completeDial(dial, peer: channel, children: children, meter: meter)
                 }
                 promise.succeed(())
             } catch {
@@ -143,13 +200,14 @@ extension NIOSSHConnectionCoordinator {
     nonisolated func acceptForwarded(
         _ channel: Channel,
         dial: TunnelForwardPlan.Dial,
-        children: TunnelChannelSet
+        children: TunnelChannelSet,
+        meter: TunnelTrafficMeter
     ) -> EventLoopFuture<Void> {
         let promise = channel.eventLoop.makePromise(of: Void.self)
         children.add(channel)
         Task {
             do {
-                try await self.completeDial(dial, peer: channel, children: children, peerIsSSH: true)
+                try await self.completeDial(dial, peer: channel, children: children, peerIsSSH: true, meter: meter)
                 promise.succeed(())
             } catch {
                 promise.fail(error)
@@ -163,16 +221,17 @@ extension NIOSSHConnectionCoordinator {
         _ dial: TunnelForwardPlan.Dial,
         peer: Channel,
         children: TunnelChannelSet,
-        peerIsSSH: Bool = false
+        peerIsSSH: Bool = false,
+        meter: TunnelTrafficMeter
     ) async throws {
         switch dial {
         case .localAddress(let host, let port):
             let tcp = try await ClientBootstrap(group: group).connect(host: host, port: port).get()
             children.add(tcp)
             if peerIsSSH {
-                try await glue(ssh: peer, tcp: tcp)
+                try await glue(ssh: peer, tcp: tcp, clientIsSSH: true, meter: meter)
             } else {
-                try await gluePlain(peer, tcp)
+                try await gluePlain(peer, tcp, meter: meter)
             }
         case .through(let endpoint, let host, let port):
             let ssh = try await openDirect(
@@ -180,16 +239,21 @@ extension NIOSSHConnectionCoordinator {
             )
             children.add(ssh)
             if peerIsSSH {
-                try await glueSSH(peer, ssh)
+                try await glueSSH(peer, ssh, meter: meter)
             } else {
-                try await glue(ssh: ssh, tcp: peer)
+                try await glue(ssh: ssh, tcp: peer, clientIsSSH: false, meter: meter)
             }
         case .socks(let through):
-            try await installSOCKS(on: peer, through: through, children: children)
+            try await installSOCKS(on: peer, through: through, children: children, meter: meter)
         }
     }
 
-    func installSOCKS(on channel: Channel, through endpoint: TunnelEndpoint, children: TunnelChannelSet) async throws {
+    func installSOCKS(
+        on channel: Channel,
+        through endpoint: TunnelEndpoint,
+        children: TunnelChannelSet,
+        meter: TunnelTrafficMeter
+    ) async throws {
         let handler = SOCKS5ServerHandler { [weak self] handler, targetHost, targetPort in
             guard let self else { throw SSHTransportError.sessionUnavailable }
             let ssh = try await self.openDirect(
@@ -200,7 +264,7 @@ extension NIOSSHConnectionCoordinator {
             try await channel.eventLoop.submit {
                 channel.pipeline.syncOperations.removeHandler(handler)
             }.get()
-            try await self.glue(ssh: ssh, tcp: channel, initialTCP: leftover)
+            try await self.glue(ssh: ssh, tcp: channel, initialTCP: leftover, clientIsSSH: false, meter: meter)
         }
         try await channel.eventLoop.submit {
             try channel.pipeline.syncOperations.addHandler(handler)
@@ -264,8 +328,14 @@ extension NIOSSHConnectionCoordinator {
         }
     }
 
-    func glue(ssh: Channel, tcp: Channel, initialTCP: ByteBuffer? = nil) async throws {
-        let (sshSide, tcpSide) = TunnelGlue.matchedPair()
+    func glue(
+        ssh: Channel,
+        tcp: Channel,
+        initialTCP: ByteBuffer? = nil,
+        clientIsSSH: Bool,
+        meter: TunnelTrafficMeter
+    ) async throws {
+        let (sshSide, tcpSide) = TunnelGlue.matchedPair(meter: meter, firstIsInbound: clientIsSSH)
         try await ssh.eventLoop.submit {
             try ssh.pipeline.syncOperations.addHandler(SSHByteAdapter())
             try ssh.pipeline.syncOperations.addHandler(sshSide)
@@ -279,8 +349,8 @@ extension NIOSSHConnectionCoordinator {
         }.get()
     }
 
-    func glueSSH(_ left: Channel, _ right: Channel) async throws {
-        let (leftSide, rightSide) = TunnelGlue.matchedPair()
+    func glueSSH(_ left: Channel, _ right: Channel, meter: TunnelTrafficMeter) async throws {
+        let (leftSide, rightSide) = TunnelGlue.matchedPair(meter: meter, firstIsInbound: true)
         try await left.eventLoop.submit {
             try left.pipeline.syncOperations.addHandler(SSHByteAdapter())
             try left.pipeline.syncOperations.addHandler(leftSide)
@@ -291,8 +361,8 @@ extension NIOSSHConnectionCoordinator {
         }.get()
     }
 
-    func gluePlain(_ left: Channel, _ right: Channel) async throws {
-        let (leftSide, rightSide) = TunnelGlue.matchedPair()
+    func gluePlain(_ left: Channel, _ right: Channel, meter: TunnelTrafficMeter) async throws {
+        let (leftSide, rightSide) = TunnelGlue.matchedPair(meter: meter, firstIsInbound: true)
         try await left.eventLoop.submit {
             try left.pipeline.syncOperations.addHandler(leftSide)
         }.get()
@@ -383,6 +453,26 @@ final class TunnelForwardRouter: @unchecked Sendable {
     }
 }
 
+final class TunnelTrafficMeter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var received: UInt64 = 0
+    private var sent: UInt64 = 0
+    let startedAt = Date()
+
+    func add(received extraIn: Int = 0, sent extraOut: Int = 0) {
+        lock.lock()
+        defer { lock.unlock() }
+        if extraIn > 0 { received += UInt64(extraIn) }
+        if extraOut > 0 { sent += UInt64(extraOut) }
+    }
+
+    func snapshot(id: UUID) -> TunnelTrafficSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+        return TunnelTrafficSnapshot(id: id, received: received, sent: sent, startedAt: startedAt)
+    }
+}
+
 final class TunnelGlue: ChannelDuplexHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
     typealias OutboundIn = ByteBuffer
@@ -391,10 +481,17 @@ final class TunnelGlue: ChannelDuplexHandler, @unchecked Sendable {
     private var partner: TunnelGlue?
     private var context: ChannelHandlerContext?
     private var pendingRead = false
+    private let meter: TunnelTrafficMeter?
+    private let inbound: Bool
 
-    static func matchedPair() -> (TunnelGlue, TunnelGlue) {
-        let first = TunnelGlue()
-        let second = TunnelGlue()
+    init(meter: TunnelTrafficMeter?, inbound: Bool) {
+        self.meter = meter
+        self.inbound = inbound
+    }
+
+    static func matchedPair(meter: TunnelTrafficMeter?, firstIsInbound: Bool) -> (TunnelGlue, TunnelGlue) {
+        let first = TunnelGlue(meter: meter, inbound: firstIsInbound)
+        let second = TunnelGlue(meter: meter, inbound: !firstIsInbound)
         first.partner = second
         second.partner = first
         return (first, second)
@@ -411,7 +508,13 @@ final class TunnelGlue: ChannelDuplexHandler, @unchecked Sendable {
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        partner?.partnerWrite(unwrapInboundIn(data))
+        let buffer = unwrapInboundIn(data)
+        if inbound {
+            meter?.add(received: buffer.readableBytes)
+        } else {
+            meter?.add(sent: buffer.readableBytes)
+        }
+        partner?.partnerWrite(buffer)
     }
     func channelReadComplete(context: ChannelHandlerContext) { partner?.partnerFlush() }
     func channelInactive(context: ChannelHandlerContext) { partner?.partnerClose() }

@@ -40,6 +40,37 @@ actor MacSessionLogExporter: SessionLogExporting {
         return destination
     }
 
+    func transcript(_ log: SessionLogMetadata) async throws -> String {
+        let chunks = try await SessionLogWriter.readChunks(metadata: log, secretStore: secretStore, baseURL: baseURL)
+        let raw = chunks
+            .filter { $0.kind == .stdout || $0.kind == .stderr || $0.kind == .status }
+            .map { String(decoding: $0.payload, as: UTF8.self) }
+            .joined()
+        return Self.stripANSI(raw)
+    }
+
+    private static func stripANSI(_ text: String) -> String {
+        var result = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index] == "\u{1b}" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next] == "[" {
+                    var cursor = text.index(after: next)
+                    while cursor < text.endIndex, !("@-~".contains(text[cursor])) {
+                        cursor = text.index(after: cursor)
+                    }
+                    if cursor < text.endIndex { cursor = text.index(after: cursor) }
+                    index = cursor
+                    continue
+                }
+            }
+            result.append(text[index])
+            index = text.index(after: index)
+        }
+        return result
+    }
+
     private struct ExportMetadata: Codable {
         var host: String; var terminal: String; var startedAt: Date; var endedAt: Date?
         var reconnectCount: Int; var incomplete: Bool

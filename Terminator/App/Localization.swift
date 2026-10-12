@@ -48,7 +48,11 @@ enum AppString: String, CaseIterable, Sendable {
     case settingsAccessMCPCaption = "settings.access.mcp.caption"
     case settingsInterface = "settings.interface"
     case settingsRestoreHiddenBanners = "settings.restoreHiddenBanners"
-    case settingsRestoreHiddenBannersCaption = "settings.restoreHiddenBanners.caption"
+    case settingsSidebar = "settings.sidebar"
+    case settingsShowServicesTab = "settings.showServicesTab"
+    case settingsShowTasksTab = "settings.showTasksTab"
+    case helpTelegram = "help.telegram"
+    case helpX = "help.x"
 }
 
 enum AppL10n {

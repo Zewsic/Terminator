@@ -30,6 +30,7 @@ extension TerminatorStore {
         case .credential: try revertCredential(using: entry)
         case .identity: try revertIdentity(using: entry)
         case .tunnel: try revertTunnel(using: entry)
+        case .snippet: try revertSnippet(using: entry)
         }
         try modelContext.save()
     }
@@ -57,6 +58,24 @@ extension TerminatorStore {
             after = current
         } else { throw PersistenceError.hostNotFound }
         try appendHistory(entity: .host, entityID: entry.entityID, operation: .restored, before: before, after: after)
+    }
+
+    func revertSnippet(using entry: HistoryEntry) throws {
+        let before = try fetchSnippet(id: entry.entityID)?.domain
+        let target = try entry.beforeSnapshot.map { try decoder.decode(SnippetProfile.self, from: $0) }
+        let after: SnippetProfile
+        if var target {
+            target.updatedAt = .now
+            try persistSnippet(target)
+            after = target
+        } else if var current = before {
+            current.deletedAt = .now
+            current.updatedAt = .now
+            try persistSnippet(current)
+            after = current
+        } else { throw PersistenceError.snippetNotFound }
+        try refreshConnectCommands(referencing: entry.entityID)
+        try appendHistory(entity: .snippet, entityID: entry.entityID, operation: .restored, before: before, after: after)
     }
 
     func revertCredential(using entry: HistoryEntry) throws {

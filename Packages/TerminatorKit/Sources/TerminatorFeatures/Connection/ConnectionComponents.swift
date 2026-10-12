@@ -73,6 +73,7 @@ extension SSHConnectionPhase {
         case .verifyingHost(let fingerprint): FeatureL10n.text(.connectionPhaseVerifyingHost, fingerprint)
         case .authenticating: FeatureL10n.text(.connectionPhaseAuthenticating)
         case .connected: FeatureL10n.text(.connectionPhaseConnected)
+        case .agent: FeatureL10n.text(.connectionPhaseAgent)
         case .reconnecting(let attempt): FeatureL10n.text(.connectionPhaseReconnecting, attempt)
         case .waitingForUser(let message): message
         case .failed(let message): message

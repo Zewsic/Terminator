@@ -16,6 +16,9 @@ public struct HostDraft: Identifiable, Equatable, Sendable {
     public var sessionPersistence: SessionPersistence
     public var remoteShell: RemoteShell
     public var connectCommands: String
+    public var connectCommandSegments: [ConnectCommandSegment]
+    public var alwaysConnected: Bool
+    public var dockerCommandPrefix: String
 
     public init(host: HostProfile? = nil) {
         id = host?.id
@@ -47,6 +50,15 @@ public struct HostDraft: Identifiable, Equatable, Sendable {
         sessionPersistence = host?.sessionPersistence ?? .none
         remoteShell = host?.remoteShell ?? .login
         connectCommands = host?.connectCommands ?? ""
+        if let segments = host?.connectCommandSegments, !segments.isEmpty {
+            connectCommandSegments = segments
+        } else if let commands = host?.connectCommands, !commands.isEmpty {
+            connectCommandSegments = [ConnectCommandSegment(text: commands)]
+        } else {
+            connectCommandSegments = [ConnectCommandSegment()]
+        }
+        alwaysConnected = host?.alwaysConnected ?? false
+        dockerCommandPrefix = host?.dockerCommandPrefix ?? DockerCommandPrefix.fallback
     }
 
     public var tags: [String] { tagsText.split(separator: ",").map(String.init) }

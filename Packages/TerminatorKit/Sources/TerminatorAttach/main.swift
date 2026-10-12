@@ -10,6 +10,8 @@ private struct Hello: Codable {
     var rows: Int
 }
 
+private enum PumpResult { case exit, stdinEOF, socketClosed }
+
 @main
 enum TerminatorAttachMain {
     static func main() {
@@ -26,24 +28,6 @@ enum TerminatorAttachMain {
               let token = value(after: "--token", in: arguments) else {
             throw AttachError.usage
         }
-        let socketFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-        guard socketFD >= 0 else { throw AttachError.system(errno) }
-        defer { Darwin.close(socketFD) }
-
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        guard socketPath.utf8.count < MemoryLayout.size(ofValue: address.sun_path) else { throw AttachError.pathTooLong }
-        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
-            bytes.initializeMemory(as: UInt8.self, repeating: 0)
-            for (index, byte) in socketPath.utf8.enumerated() { bytes[index] = byte }
-        }
-        let connected = withUnsafePointer(to: &address) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard connected == 0 else { throw AttachError.system(errno) }
-
         var original = termios()
         let hasTTY = tcgetattr(STDIN_FILENO, &original) == 0
         if hasTTY {
@@ -53,34 +37,93 @@ enum TerminatorAttachMain {
         }
         defer { if hasTTY { var value = original; _ = tcsetattr(STDIN_FILENO, TCSANOW, &value) } }
 
+        var delay = 0.5
+        var announcedOutage = false
+        while true {
+            do {
+                let socketFD = try connect(socketPath)
+                defer { Darwin.close(socketFD) }
+                let size = terminalSize()
+                try send(.hello, try JSONEncoder().encode(Hello(version: 1, token: token, columns: size.0, rows: size.1)), to: socketFD)
+                announcedOutage = false
+                delay = 0.5
+                switch try pump(socketFD) {
+                case .exit, .stdinEOF: return
+                case .socketClosed: break
+                }
+            } catch AttachError.usage {
+                throw AttachError.usage
+            } catch AttachError.pathTooLong {
+                throw AttachError.pathTooLong
+            } catch {
+                // A missing socket or a dropped connection uses the same backoff.
+            }
+            if !announcedOutage {
+                try writeAll(Data("\r\n[Terminator: Reconnecting...]\r\n".utf8), to: STDOUT_FILENO)
+                announcedOutage = true
+            }
+            Thread.sleep(forTimeInterval: delay)
+            delay = min(delay * 2, 5)
+        }
+    }
+
+    private static func connect(_ socketPath: String) throws -> Int32 {
+        let socketFD = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard socketFD >= 0 else { throw AttachError.system(errno) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        guard socketPath.utf8.count < MemoryLayout.size(ofValue: address.sun_path) else {
+            Darwin.close(socketFD)
+            throw AttachError.pathTooLong
+        }
+        withUnsafeMutableBytes(of: &address.sun_path) { bytes in
+            bytes.initializeMemory(as: UInt8.self, repeating: 0)
+            for (index, byte) in socketPath.utf8.enumerated() { bytes[index] = byte }
+        }
+        let connected = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard connected == 0 else {
+            let error = errno
+            Darwin.close(socketFD)
+            throw AttachError.system(error)
+        }
+        return socketFD
+    }
+
+    private static func pump(_ socketFD: Int32) throws -> PumpResult {
         var lastSize = terminalSize()
-        try send(.hello, try JSONEncoder().encode(Hello(version: 1, token: token, columns: lastSize.0, rows: lastSize.1)), to: socketFD)
         var pollDescriptors = [
             pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0),
             pollfd(fd: socketFD, events: Int16(POLLIN), revents: 0),
         ]
         while true {
             let result = Darwin.poll(&pollDescriptors, nfds_t(pollDescriptors.count), 250)
-            guard result >= 0 || errno == EINTR else { throw AttachError.system(errno) }
+            guard result >= 0 || errno == EINTR else { return .socketClosed }
             let currentSize = terminalSize()
             if currentSize != lastSize {
                 lastSize = currentSize
                 try send(.resize, try JSONEncoder().encode([currentSize.0, currentSize.1]), to: socketFD)
             }
-            if pollDescriptors[0].revents & Int16(POLLIN) != 0 {
+            if pollDescriptors[0].revents & Int16(POLLIN | POLLHUP) != 0 {
                 var bytes = [UInt8](repeating: 0, count: 16_384)
                 let count = Darwin.read(STDIN_FILENO, &bytes, bytes.count)
+                if count == 0 { return .stdinEOF }
                 if count > 0 { try send(.input, Data(bytes.prefix(count)), to: socketFD) }
             }
             if pollDescriptors[1].revents & Int16(POLLIN) != 0 {
-                guard let (type, payload) = try receive(from: socketFD) else { break }
+                guard let (type, payload) = try receive(from: socketFD) else { return .socketClosed }
                 switch type {
                 case .stdout, .status: try writeAll(payload, to: STDOUT_FILENO)
                 case .stderr: try writeAll(payload, to: STDERR_FILENO)
-                case .exit: return
-                default: continue
+                case .exit: return .exit
+                default: break
                 }
-            } else if pollDescriptors[1].revents & (Int16(POLLHUP) | Int16(POLLERR)) != 0 { break }
+            } else if pollDescriptors[1].revents & (Int16(POLLHUP) | Int16(POLLERR)) != 0 {
+                return .socketClosed
+            }
         }
     }
 

@@ -38,7 +38,9 @@ extension TerminatorAppModel {
 
             if draft.mode == .importExisting,
                let existing = activeCredentials.first(where: { $0.accessKey?.fingerprint == prepared.fingerprint }) {
-                openSSHResultMessage = FeatureL10n.text(.opensshCredentialReused, existing.label)
+                if !suppressesImportAnnouncements {
+                    openSSHResultMessage = FeatureL10n.text(.opensshCredentialReused, existing.label)
+                }
                 return existing.id
             }
 

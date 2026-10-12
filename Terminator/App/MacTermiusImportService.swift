@@ -8,6 +8,7 @@ actor MacTermiusImportService: ExternalImportService {
     private let databaseNames = [
         "hosts", "keys", "ssh_identities", "ssh_configs", "proxies", "groups",
         "tags", "tag_hosts", "pf_rules", "known_hosts",
+        "snippets", "snippet_packages", "tag_snippets",
     ]
 
     func availableSources() async -> [ExternalImportSource] {
@@ -309,13 +310,38 @@ private nonisolated struct TermiusNormalizer {
                          tags: Array(Set(tagsByHost[id] ?? [])).sorted(), identityID: identity.map(entityID),
                          accessKeyID: key.map(entityID), proxyID: proxy.map(entityID), tunnelIDs: tunnelIDsByHost[id] ?? [])
         }
+        let packageIndex = index(table("snippet_packages"))
+        var tagsBySnippet: [String: [String]] = [:]
+        for link in table("tag_snippets") {
+            guard let snippet = dereference(link["snippet"], in: index(table("snippets"))),
+                  let tag = dereference(link["tag"], in: tagIndex) else { continue }
+            let label = text(tag["label"])
+            if !label.isEmpty { tagsBySnippet[entityID(snippet), default: []].append(label) }
+        }
+        let snippets = table("snippets").compactMap { row -> ExternalImportSnippet? in
+            let script = text(row["script"])
+            guard !script.isEmpty else { return nil }
+            let package = dereference(row["package"] ?? row["snippet_package"], in: packageIndex)
+                ?? dereference(row["group"], in: groupIndex)
+            let id = entityID(row)
+            var tags = tagsBySnippet[id] ?? []
+            if let inline = row["tags"] as? [String] { tags.append(contentsOf: inline) }
+            let notes = [text(row["description"]), text(row["action_description"]), text(row["comment"])]
+                .first { !$0.isEmpty } ?? ""
+            let label = text(row["label"])
+            return .init(
+                id: id, label: label.isEmpty ? "Snippet" : label, script: script,
+                group: text(package?["label"]), tags: Array(Set(tags)).sorted(), notes: notes
+            )
+        }.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
         let knownHosts = table("known_hosts").compactMap { row -> ExternalImportKnownHost? in
             let hostnames = text(row["hostnames"]), key = text(row["key"])
             guard !hostnames.isEmpty, !key.isEmpty else { return nil }
             return .init(id: entityID(row), hostnames: hostnames, key: key, marker: text(row["marker"]), comment: text(row["comment"]))
         }
         return .init(source: source, hosts: hosts.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending },
-                     identities: identities, accessKeys: keys, tunnels: tunnels, proxies: proxies, knownHosts: knownHosts)
+                     identities: identities, accessKeys: keys, tunnels: tunnels, proxies: proxies, knownHosts: knownHosts,
+                     snippets: snippets)
     }
 
     private func table(_ name: String) -> [[String: Any]] { deduplicated(tables[name] ?? []) }

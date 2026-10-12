@@ -360,13 +360,13 @@ struct TerminatorStoreTests {
         _ = try await store.listHosts(includeDeleted: true)
     }
 
-    @Test("V6 schema migrates the existing application store")
-    func versionSixMigratesCopiedApplicationStore() async throws {
+    @Test("Current schema migrates the existing application store")
+    func currentSchemaMigratesCopiedApplicationStore() async throws {
         let original = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appending(path: "Terminator.store")
         guard FileManager.default.fileExists(atPath: original.path) else { return }
         let directory = FileManager.default.temporaryDirectory
-            .appending(path: "TerminatorV6UserStore-\(UUID().uuidString)", directoryHint: .isDirectory)
+            .appending(path: "TerminatorCurrentUserStore-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let copy = directory.appending(path: "Terminator.store")
@@ -378,7 +378,7 @@ struct TerminatorStoreTests {
             }
         }
 
-        let schema = Schema(versionedSchema: TerminatorSchemaV6.self)
+        let schema = TerminatorSchema.version8
         let container = try ModelContainer(
             for: schema,
             migrationPlan: TerminatorMigrationPlan.self,

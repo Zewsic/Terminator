@@ -10,7 +10,9 @@ struct HostDetailView: View {
     var body: some View {
         Form {
             Section(FeatureL10n.text(.hostsConnection)) {
-                LabeledContent(FeatureL10n.text(.hostsAddress), value: host.hostname)
+                LabeledContent(FeatureL10n.text(.hostsAddress)) {
+                    Text(host.hostname)
+                }
                 LabeledContent(FeatureL10n.text(.hostsPort), value: String(host.port))
                 if let identity {
                     LabeledContent(FeatureL10n.text(.hostsIdentity), value: identity.name)

@@ -5,6 +5,7 @@ struct TunnelEditor: View {
     @Environment(TerminatorAppModel.self) private var model
     @State private var draft: TunnelDraft
     @State private var originalDraft: TunnelDraft
+    @State private var pane: HostEditorPane = .edit
     let onSave: @MainActor (TunnelDraft) async -> Bool
     let onStart: @MainActor () -> Void
     let onStop: @MainActor () -> Void
@@ -24,10 +25,21 @@ struct TunnelEditor: View {
     }
 
     var body: some View {
-        InspectorScreen(title: FeatureL10n.text(.tunnelEdit)) {
-            TunnelKindSelector(kind: $draft.kind)
-            TunnelSettingsGroup(draft: $draft)
-            TunnelEndpointStack(draft: $draft)
+        InspectorScreen(heading: screenHeading) {
+            if isConnected, pane == .status {
+                if let traffic = model.tunnelTraffic[draft.id ?? UUID()] {
+                    TunnelStatusPane(traffic: traffic, phase: phase)
+                } else {
+                    ProgressView()
+                        .controlSize(.large)
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                }
+            }
+            if !isConnected || pane != .status {
+                TunnelKindSelector(kind: $draft.kind)
+                TunnelSettingsGroup(draft: $draft)
+                TunnelEndpointStack(draft: $draft)
+            }
         } actions: {
             InspectorActionArea {
                 if hasChanges {
@@ -39,6 +51,12 @@ struct TunnelEditor: View {
                     performPrimary()
                 }
             }
+        }
+        .onChange(of: isConnected) { _, connected in
+            pane = connected ? .status : .edit
+        }
+        .task {
+            if isConnected { pane = .status }
         }
         .onDisappear {
             let value = normalized(draft)
@@ -57,6 +75,36 @@ struct TunnelEditor: View {
         guard let id = draft.id else { return false }
         if case .connected = model.tunnelPhase(for: id) { return true }
         return model.tunnelPhase(for: id).isWorking
+    }
+
+    private var phase: SSHConnectionPhase {
+        guard let id = draft.id else { return .disconnected }
+        return model.tunnelPhase(for: id)
+    }
+
+    private var isConnected: Bool {
+        if case .connected = phase { return true }
+        if case .reconnecting = phase { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var screenHeading: some View {
+        InspectorSegmentedSelector(
+            selection: $pane,
+            options: headingOptions,
+            style: .joined
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var headingOptions: [InspectorSelectorOption<HostEditorPane>] {
+        var options: [InspectorSelectorOption<HostEditorPane>] = []
+        if isConnected {
+            options.append(InspectorSelectorOption(value: .status, title: FeatureL10n.text(.hostStatus)))
+        }
+        options.append(InspectorSelectorOption(value: .edit, title: FeatureL10n.text(.tunnelPane)))
+        return options
     }
 
     private func performPrimary() {

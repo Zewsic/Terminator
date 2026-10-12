@@ -9,6 +9,12 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
     private var pending: [UUID: CheckedContinuation<ConnectionControlResponse, any Error>] = [:]
     private var phaseContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
     private var tunnelContinuations: [UUID: AsyncStream<TunnelPhaseEvent>.Continuation] = [:]
+    private var dockerContinuations: [UUID: AsyncStream<DockerInventorySnapshot>.Continuation] = [:]
+    private var statusContinuations: [UUID: AsyncStream<HostStatusSnapshot>.Continuation] = [:]
+    private var trafficContinuations: [UUID: AsyncStream<TunnelTrafficSnapshot>.Continuation] = [:]
+    private var latestDocker = DockerInventorySnapshot()
+    private var latestHostPhases: [UUID: SSHConnectionPhase] = [:]
+    private var latestTunnelPhases: [UUID: SSHConnectionPhase] = [:]
     private var promptHandler: (@Sendable (ConnectionPromptEnvelope) async -> ConnectionPromptReply)?
     private var isConnecting = false
     private var connectionWaiters: [CheckedContinuation<Void, any Error>] = []
@@ -87,15 +93,38 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
     public func tunnelPhases() async -> AsyncStream<TunnelPhaseEvent> {
         let id = UUID()
         return AsyncStream { continuation in
-            Task { await self.addTunnelObserver(id, continuation: continuation) }
+            Task {
+                await self.addTunnelObserver(id, continuation: continuation)
+                try? await self.ensureConnected()
+            }
             continuation.onTermination = { [weak self] _ in
                 Task { await self?.removeTunnelObserver(id) }
             }
         }
     }
 
+    public func dockerInventory() async -> AsyncStream<DockerInventorySnapshot> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            Task {
+                await self.addDockerObserver(id, continuation: continuation)
+                try? await self.ensureConnected()
+            }
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeDockerObserver(id) }
+            }
+        }
+    }
+
+    public func prepare(hostID: UUID) async throws {
+        let response = try await request(.prepare(hostID: hostID))
+        if case .failed(let message) = response { throw ConnectionServiceError.failed(message) }
+        guard case .ok = response else { throw ConnectionServiceError.unavailable }
+    }
+
     public func exec(host: HostProfile, command: String) async throws -> SSHExecResult {
-        let response = try await request(.exec(hostID: host.id, command: command))
+        let timeout: Duration = command.contains("TERMINATOR_HELPER_") ? .seconds(300) : .seconds(30)
+        let response = try await request(.exec(hostID: host.id, command: command), timeout: timeout)
         switch response {
         case .exec(let stdout, let stderr, let exitCode):
             return SSHExecResult(stdout: stdout, stderr: stderr, exitCode: exitCode)
@@ -182,13 +211,22 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
         case .response(let id, let response):
             pending.removeValue(forKey: id)?.resume(returning: response)
         case .event(.phase(let hostID, let phase)):
+            latestHostPhases[hostID] = phase
             if let observers = phaseContinuations[hostID] {
                 for continuation in observers.values { continuation.yield(phase) }
             }
         case .event(.prompt(let envelope)):
             Task { await self.answer(envelope) }
         case .event(.tunnelPhase(let event)):
+            latestTunnelPhases[event.id] = event.phase
             for continuation in tunnelContinuations.values { continuation.yield(event) }
+        case .event(.dockerInventory(let snapshot)):
+            latestDocker = snapshot
+            for continuation in dockerContinuations.values { continuation.yield(snapshot) }
+        case .event(.hostStatus(let snapshot)):
+            for continuation in statusContinuations.values { continuation.yield(snapshot) }
+        case .event(.tunnelTraffic(let snapshot)):
+            for continuation in trafficContinuations.values { continuation.yield(snapshot) }
         case .request:
             break
         }
@@ -211,15 +249,19 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
         _ = try? await request(.answer(promptID: envelope.id, reply: reply))
     }
 
-    private func request(_ request: ConnectionControlRequest) async throws -> ConnectionControlResponse {
+    private func request(
+        _ request: ConnectionControlRequest,
+        timeout: Duration = .seconds(30)
+    ) async throws -> ConnectionControlResponse {
         try await ensureConnected()
         guard let channel else { throw ConnectionServiceError.unavailable }
-        return try await send(request, over: channel)
+        return try await send(request, over: channel, timeout: timeout)
     }
 
     private func send(
         _ request: ConnectionControlRequest,
-        over channel: Channel
+        over channel: Channel,
+        timeout: Duration = .seconds(30)
     ) async throws -> ConnectionControlResponse {
         let id = UUID()
         return try await withCheckedThrowingContinuation { continuation in
@@ -229,8 +271,9 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
                 continuation.resume(throwing: ConnectionServiceError.unavailable)
                 return
             }
+            let seconds = Double(timeout.components.seconds)
             Task { [weak self] in
-                try? await Task.sleep(for: .seconds(30))
+                try? await Task.sleep(for: .seconds(seconds))
                 await self?.timeoutRequest(id)
             }
             let requestOwner = self
@@ -267,7 +310,7 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
     }
 
     private func scheduleReconnectIfNeeded() {
-        guard !phaseContinuations.isEmpty, reconnectTask == nil else { return }
+        guard hasObservers, reconnectTask == nil else { return }
         reconnectTask = Task { [weak self] in
             var delay = Duration.milliseconds(250)
             while !Task.isCancelled {
@@ -301,6 +344,9 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
 
     private func addTunnelObserver(_ id: UUID, continuation: AsyncStream<TunnelPhaseEvent>.Continuation) {
         tunnelContinuations[id] = continuation
+        for (tunnelID, phase) in latestTunnelPhases {
+            continuation.yield(TunnelPhaseEvent(id: tunnelID, phase: phase))
+        }
     }
 
     private func removeTunnelObserver(_ id: UUID) {
@@ -313,6 +359,9 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
         continuation: AsyncStream<SSHConnectionPhase>.Continuation
     ) {
         phaseContinuations[hostID, default: [:]][observerID] = continuation
+        if let phase = latestHostPhases[hostID] {
+            continuation.yield(phase)
+        }
         scheduleReconnectIfNeeded()
     }
 
@@ -321,10 +370,115 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
         if phaseContinuations[hostID]?.isEmpty == true {
             phaseContinuations[hostID] = nil
         }
-        if phaseContinuations.isEmpty {
+        if !hasObservers {
             reconnectTask?.cancel()
             reconnectTask = nil
         }
+    }
+
+    private var hasObservers: Bool {
+        !phaseContinuations.isEmpty
+            || !dockerContinuations.isEmpty
+            || !tunnelContinuations.isEmpty
+            || !statusContinuations.isEmpty
+            || !trafficContinuations.isEmpty
+    }
+
+    private func addDockerObserver(
+        _ id: UUID,
+        continuation: AsyncStream<DockerInventorySnapshot>.Continuation
+    ) {
+        dockerContinuations[id] = continuation
+        continuation.yield(latestDocker)
+        scheduleReconnectIfNeeded()
+    }
+
+    private func removeDockerObserver(_ id: UUID) {
+        dockerContinuations[id] = nil
+        if !hasObservers {
+            reconnectTask?.cancel()
+            reconnectTask = nil
+        }
+    }
+
+    public func hostStatuses() async -> AsyncStream<HostStatusSnapshot> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            Task {
+                await self.addStatusObserver(id, continuation: continuation)
+                try? await self.ensureConnected()
+            }
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeStatusObserver(id) }
+            }
+        }
+    }
+
+    public func tunnelTraffic() async -> AsyncStream<TunnelTrafficSnapshot> {
+        let id = UUID()
+        return AsyncStream { continuation in
+            Task {
+                await self.addTrafficObserver(id, continuation: continuation)
+                try? await self.ensureConnected()
+            }
+            continuation.onTermination = { [weak self] _ in
+                Task { await self?.removeTrafficObserver(id) }
+            }
+        }
+    }
+
+    public func controlDocker(
+        endpoint: DockerEndpoint,
+        containerID: String,
+        action: DockerControlAction
+    ) async throws -> String {
+        let response = try await request(
+            .docker(endpoint: endpoint, containerID: containerID, action: action)
+        )
+        switch response {
+        case .exec(let stdout, let stderr, let exitCode):
+            guard exitCode == 0 || action == .logs || action == .stats else {
+                throw ConnectionServiceError.failed(stderr.isEmpty ? stdout : stderr)
+            }
+            return stdout
+        case .failed(let message): throw ConnectionServiceError.failed(message)
+        default: throw ConnectionServiceError.unavailable
+        }
+    }
+
+    public func openContainerShell(endpoint: DockerEndpoint, containerID: String) async throws {
+        let response = try await request(
+            .containerShell(endpoint: endpoint, containerID: containerID)
+        )
+        switch response {
+        case .ok: return
+        case .failed(let message): throw ConnectionServiceError.failed(message)
+        default: throw ConnectionServiceError.unavailable
+        }
+    }
+
+    private func addStatusObserver(
+        _ id: UUID,
+        continuation: AsyncStream<HostStatusSnapshot>.Continuation
+    ) {
+        statusContinuations[id] = continuation
+        scheduleReconnectIfNeeded()
+    }
+
+    private func removeStatusObserver(_ id: UUID) {
+        statusContinuations[id] = nil
+    }
+
+    private func addTrafficObserver(
+        _ id: UUID,
+        continuation: AsyncStream<TunnelTrafficSnapshot>.Continuation
+    ) {
+        trafficContinuations[id] = continuation
+        scheduleReconnectIfNeeded()
+    }
+
+    private func removeTrafficObserver(_ id: UUID) {
+        trafficContinuations[id] = nil
     }
 }
 

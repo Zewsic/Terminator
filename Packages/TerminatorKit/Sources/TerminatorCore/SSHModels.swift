@@ -6,9 +6,19 @@ public enum SSHConnectionPhase: Codable, Equatable, Sendable {
     case verifyingHost(fingerprint: String)
     case authenticating
     case connected
+    /// The connection agent holds an authenticated SSH transport. No interactive session is open.
+    case agent
     case reconnecting(attempt: Int)
     case waitingForUser(message: String)
     case failed(message: String)
+
+    /// Authenticated transport is up, with or without an interactive session.
+    public var isLinked: Bool {
+        switch self {
+        case .connected, .agent: true
+        default: false
+        }
+    }
 }
 
 public enum SSHSessionEvent: Equatable, Sendable {
@@ -65,7 +75,8 @@ public protocol SSHConnectionCoordinating: Sendable {
         host: HostProfile,
         terminal: TerminalApplication,
         size: TerminalSize,
-        persistence: SessionPersistence
+        persistence: SessionPersistence,
+        command: String?
     ) async throws -> SSHSessionHandle
     func exec(host: HostProfile, command: String) async throws -> SSHExecResult
     func state(for hostID: UUID) async -> SSHConnectionPhase
@@ -134,10 +145,12 @@ public protocol ExternalTerminalConnecting: Sendable {
     func state(for hostID: UUID) async -> SSHConnectionPhase
     func states(for hostID: UUID) async -> AsyncStream<SSHConnectionPhase>
     func disconnect(hostID: UUID) async
+    func prepare(hostID: UUID) async throws
 }
 
 public protocol SessionLogExporting: Sendable {
     func export(_ log: SessionLogMetadata) async throws -> URL?
+    func transcript(_ log: SessionLogMetadata) async throws -> String
 }
 
 public enum SessionLogState: String, Codable, Sendable { case active, complete, incomplete }
@@ -154,6 +167,7 @@ public struct SessionLogMetadata: Codable, Equatable, Identifiable, Sendable {
     public var reconnectCount: Int
     public var state: SessionLogState
     public var isPinned: Bool
+    public var deletedAt: Date?
     public var relativePath: String
     public var encryptionKeyID: SecretID
 
@@ -161,13 +175,13 @@ public struct SessionLogMetadata: Codable, Equatable, Identifiable, Sendable {
         id: UUID = UUID(), hostID: UUID, hostDisplayName: String, terminal: TerminalApplication,
         startedAt: Date = .now, endedAt: Date? = nil, byteCount: Int64 = 0,
         reconnectCount: Int = 0, state: SessionLogState = .active, isPinned: Bool = false,
-        relativePath: String, encryptionKeyID: SecretID
+        deletedAt: Date? = nil, relativePath: String, encryptionKeyID: SecretID
     ) {
         self.id = id; self.hostID = hostID; self.hostDisplayName = hostDisplayName
         self.terminal = terminal; self.startedAt = startedAt; self.endedAt = endedAt
         self.byteCount = byteCount; self.reconnectCount = reconnectCount
-        self.state = state; self.isPinned = isPinned; self.relativePath = relativePath
-        self.encryptionKeyID = encryptionKeyID
+        self.state = state; self.isPinned = isPinned; self.deletedAt = deletedAt
+        self.relativePath = relativePath; self.encryptionKeyID = encryptionKeyID
     }
 }
 

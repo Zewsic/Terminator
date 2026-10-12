@@ -18,41 +18,68 @@ public enum AttachBrokerError: LocalizedError, Sendable {
 }
 
 public actor TerminalAttachBroker {
-    private struct Pending: Sendable {
-        var session: SSHSessionHandle
-        var expiresAt: Date
+    private enum TokenRecord {
+        case pending(session: SSHSessionHandle, expiresAt: Date)
+        case attached(session: SSHSessionHandle, listenerID: UUID)
+        case detached(session: SSHSessionHandle)
+
+        var session: SSHSessionHandle {
+            switch self {
+            case .pending(let session, _), .attached(let session, _), .detached(let session): session
+            }
+        }
     }
 
-    private let coordinator: any SSHConnectionCoordinating
+    fileprivate struct ClaimedAttach: Sendable {
+        var session: SSHSessionHandle
+        var events: AsyncStream<SSHSessionEvent>
+    }
+
+    private let coordinator: NIOSSHConnectionCoordinator
+    private let desiredWork: DesiredWorkStore?
     private let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     private let directoryURL: URL
     private let socketURL: URL
     private var serverChannel: Channel?
-    private var pending: [String: Pending] = [:]
+    private var records: [String: TokenRecord] = [:]
+    private var sessionTokens: [UUID: String] = [:]
+    private var graceTasks: [String: Task<Void, Never>] = [:]
 
-    public init(coordinator: any SSHConnectionCoordinating, directoryURL: URL) {
+    public init(
+        coordinator: NIOSSHConnectionCoordinator,
+        directoryURL: URL,
+        desiredWork: DesiredWorkStore? = nil
+    ) {
         self.coordinator = coordinator
+        self.desiredWork = desiredWork
         self.directoryURL = directoryURL
         self.socketURL = directoryURL.appending(path: "attach.sock")
     }
 
     deinit { try? group.syncShutdownGracefully() }
 
-    public func createDescriptor(host: HostProfile, terminal: TerminalApplication) async throws -> AttachDescriptor {
+    public func createDescriptor(
+        host: HostProfile,
+        terminal: TerminalApplication,
+        remoteCommand: String? = nil
+    ) async throws -> AttachDescriptor {
         try await startIfNeeded()
         await removeExpired()
-        // Opening a child SSH session is the authentication barrier. Do not
-        // launch an external terminal until the server has accepted one of the
-        // configured authentication methods and the PTY channel is usable.
         let session = try await coordinator.openSession(
             host: host,
             terminal: terminal,
             size: .init(columns: 80, rows: 24),
-            persistence: host.sessionPersistence
+            persistence: host.sessionPersistence,
+            command: remoteCommand
         )
+        discardHeadEvents(session)
         let token = Self.token()
         let expiresAt = Date.now.addingTimeInterval(600)
-        pending[token] = Pending(session: session, expiresAt: expiresAt)
+        records[token] = .pending(session: session, expiresAt: expiresAt)
+        sessionTokens[session.id] = token
+        await desiredWork?.addTerminal(
+            DesiredTerminal(token: token, hostID: host.id, columns: 80, rows: 24, remoteCommand: remoteCommand)
+        )
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(600))
             await self?.expire(token: token)
@@ -63,8 +90,22 @@ public actor TerminalAttachBroker {
     }
 
     public func cancel(_ descriptor: AttachDescriptor) async {
-        guard let value = pending.removeValue(forKey: descriptor.token) else { return }
-        await value.session.close()
+        guard let record = records.removeValue(forKey: descriptor.token) else { return }
+        graceTasks[descriptor.token]?.cancel()
+        graceTasks[descriptor.token] = nil
+        await record.session.close()
+    }
+
+    public func sessionClosed(_ sessionID: UUID) async {
+        guard let token = sessionTokens.removeValue(forKey: sessionID) else { return }
+        graceTasks[token]?.cancel()
+        graceTasks[token] = nil
+        records[token] = nil
+        await desiredWork?.removeTerminal(token: token)
+    }
+
+    public func restoreDetached(_ terminal: DesiredTerminal, host: HostProfile) {
+        Task { [weak self] in await self?.openRestored(terminal, host: host) }
     }
 
     public func command(for descriptor: AttachDescriptor, helperURL: URL) -> String {
@@ -73,13 +114,87 @@ public actor TerminalAttachBroker {
             .joined(separator: " ")
     }
 
-    fileprivate func claim(token: String, size: TerminalSize) async throws -> SSHSessionHandle {
+    fileprivate func claim(token: String, size: TerminalSize) async throws -> ClaimedAttach {
         await removeExpired()
-        guard let value = pending.removeValue(forKey: token), value.expiresAt > .now else {
+        graceTasks[token]?.cancel()
+        graceTasks[token] = nil
+        switch records[token] {
+        case .pending(let session, let expiresAt) where expiresAt > .now:
+            try await session.resize(to: size)
+            guard let (listenerID, events) = await coordinator.subscribe(sessionID: session.id) else {
+                throw AttachBrokerError.expiredOrInvalidToken
+            }
+            records[token] = .attached(session: session, listenerID: listenerID)
+            await desiredWork?.updateTerminal(token: token, columns: size.columns, rows: size.rows)
+            return ClaimedAttach(session: session, events: events)
+        case .detached(let session):
+            try await session.resize(to: size)
+            guard let (listenerID, events) = await coordinator.subscribe(sessionID: session.id) else {
+                throw AttachBrokerError.expiredOrInvalidToken
+            }
+            records[token] = .attached(session: session, listenerID: listenerID)
+            await desiredWork?.updateTerminal(token: token, columns: size.columns, rows: size.rows)
+            return ClaimedAttach(session: session, events: events)
+        case .attached:
+            throw AttachBrokerError.protocolError
+        default:
             throw AttachBrokerError.expiredOrInvalidToken
         }
-        try await value.session.resize(to: size)
-        return value.session
+    }
+
+    fileprivate func detach(token: String) async {
+        guard case .attached(let session, let listenerID) = records[token] else { return }
+        await coordinator.unsubscribe(sessionID: session.id, listenerID: listenerID)
+        records[token] = .detached(session: session)
+        beginGrace(token)
+    }
+
+    private func openRestored(_ terminal: DesiredTerminal, host: HostProfile) async {
+        while !Task.isCancelled {
+            if await coordinator.isPoolActive(host.id) {
+                do {
+                    let session = try await coordinator.openSession(
+                        host: host,
+                        terminal: .terminal,
+                        size: TerminalSize(columns: max(1, terminal.columns), rows: max(1, terminal.rows)),
+                        persistence: host.sessionPersistence,
+                        command: terminal.remoteCommand
+                    )
+                    discardHeadEvents(session)
+                    records[terminal.token] = .detached(session: session)
+                    sessionTokens[session.id] = terminal.token
+                    beginGrace(terminal.token)
+                    return
+                } catch {
+                    try? await Task.sleep(for: .seconds(1))
+                    continue
+                }
+            }
+            if !(await coordinator.isRetained(host.id)) {
+                await desiredWork?.removeTerminal(token: terminal.token)
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+    }
+
+    private func beginGrace(_ token: String) {
+        graceTasks[token]?.cancel()
+        graceTasks[token] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(60))
+            await self?.graceExpired(token)
+        }
+    }
+
+    private func graceExpired(_ token: String) async {
+        guard case .detached(let session) = records[token] else { return }
+        records[token] = nil
+        graceTasks[token] = nil
+        await session.close()
+    }
+
+    private func discardHeadEvents(_ session: SSHSessionHandle) {
+        Task { for await _ in session.events {} }
     }
 
     private func startIfNeeded() async throws {
@@ -100,15 +215,22 @@ public actor TerminalAttachBroker {
 
     private func removeExpired() async {
         let now = Date.now
-        let expired = pending.filter { $0.value.expiresAt <= now }
-        pending = pending.filter { $0.value.expiresAt > now }
-        for value in expired.values { await value.session.close() }
+        let expired = records.compactMap { token, record -> (String, SSHSessionHandle)? in
+            if case .pending(let session, let expiresAt) = record, expiresAt <= now {
+                return (token, session)
+            }
+            return nil
+        }
+        for (token, session) in expired {
+            records[token] = nil
+            await session.close()
+        }
     }
 
     private func expire(token: String) async {
-        guard let value = pending[token], value.expiresAt <= .now else { return }
-        pending[token] = nil
-        await value.session.close()
+        guard case .pending(let session, let expiresAt) = records[token], expiresAt <= .now else { return }
+        records[token] = nil
+        await session.close()
     }
 
     private static func token() -> String {
@@ -138,6 +260,8 @@ private final class AttachServerHandler: ChannelDuplexHandler, @unchecked Sendab
     private let broker: TerminalAttachBroker
     private var buffer = ByteBuffer()
     private var session: SSHSessionHandle?
+    private var token: String?
+    private var claimed = false
 
     init(broker: TerminalAttachBroker) { self.broker = broker }
 
@@ -175,16 +299,27 @@ private final class AttachServerHandler: ChannelDuplexHandler, @unchecked Sendab
                 context.close(promise: nil); return
             }
             let clientChannel = context.channel
+            let helloToken = hello.token
             Task { [broker, clientChannel] in
                 do {
-                    let handle = try await broker.claim(
-                        token: hello.token,
+                    let claimedAttach = try await broker.claim(
+                        token: helloToken,
                         size: TerminalSize(columns: max(1, hello.columns), rows: max(1, hello.rows))
                     )
+                    guard clientChannel.isActive else {
+                        await broker.detach(token: helloToken)
+                        return
+                    }
                     clientChannel.eventLoop.execute {
-                        self.session = handle
+                        self.session = claimedAttach.session
+                        self.token = helloToken
+                        self.claimed = true
+                        guard clientChannel.isActive else {
+                            Task { await broker.detach(token: helloToken) }
+                            return
+                        }
                         Task { [clientChannel] in
-                            for await event in handle.events {
+                            for await event in claimedAttach.events {
                                 clientChannel.eventLoop.execute { self.forward(event, channel: clientChannel) }
                             }
                         }
@@ -230,7 +365,9 @@ private final class AttachServerHandler: ChannelDuplexHandler, @unchecked Sendab
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        if let session { Task { await session.close() } }
+        if claimed, let token {
+            Task { await broker.detach(token: token) }
+        }
         context.fireChannelInactive()
     }
 

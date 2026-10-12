@@ -32,6 +32,7 @@
 "error.host.duplicateAuthenticationMethod" = "An authentication method can appear only once.";
 "error.host.referencedIdentityUnavailable" = "The selected identity is unavailable.";
 "error.host.referencedCredentialUnavailable" = "A selected credential is unavailable.";
+"error.host.invalidDockerCommandPrefix" = "Docker prefix can only contain letters, numbers, and . _ / : - separated by single spaces.";
 "error.identity.missingName" = "An identity name is required.";
 "error.identity.missingUsername" = "An identity username is required.";
 "error.identity.missingAuthenticationMethod" = "Add at least one authentication method.";
@@ -75,6 +76,10 @@
 "history.entity.credential" = "Credential";
 "history.entity.identity" = "Identity";
 "history.entity.tunnel" = "Tunnel";
+"history.entity.snippet" = "Snippet";
+"error.store.snippetNotFound" = "The snippet no longer exists.";
+"error.snippet.missingName" = "A snippet name is required.";
+"error.snippet.missingScript" = "A snippet script is required.";
 "tunnel.kind.local" = "Local";
 "tunnel.kind.remote" = "Remote";
 "tunnel.kind.dynamic" = "Dynamic";

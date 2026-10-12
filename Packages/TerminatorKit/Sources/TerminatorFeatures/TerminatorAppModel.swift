@@ -7,12 +7,38 @@ import TerminatorCore
 public final class TerminatorAppModel {
     public var selection: AppSection = .hosts
     public internal(set) var hosts: [HostProfile] = []
+    public internal(set) var archivedHosts: [HostProfile] = []
     public internal(set) var tunnels: [TunnelProfile] = []
+    public internal(set) var archivedTunnels: [TunnelProfile] = []
+    public internal(set) var snippets: [SnippetProfile] = []
+    public internal(set) var archivedSnippets: [SnippetProfile] = []
     public internal(set) var tunnelPhases: [UUID: SSHConnectionPhase] = [:]
     public internal(set) var credentials: [CredentialMetadata] = []
     public internal(set) var identities: [IdentityProfile] = []
     public internal(set) var history: [HistoryEntry] = []
     public internal(set) var containers: [ContainerSummary] = []
+    public internal(set) var dockerContainers: [DockerContainer] = []
+    public internal(set) var dockerUpdating: [DockerEndpoint] = []
+    public internal(set) var dockerInventoryReady = false
+    public internal(set) var hostStatuses: [UUID: HostStatusSnapshot] = [:]
+    var helperInstallations: [HelperInstallation] = []
+    var helperOnline: Set<UUID> = []
+    var helperStatuses: [UUID: HostStatusSnapshot] = [:]
+    var helperContainers: [UUID: [DockerContainer]] = [:]
+    var helperTokens: [UUID: String] = [:]
+    var helperAdoptAfter: [UUID: Date] = [:]
+    var helperUpdateAfter: [UUID: Date] = [:]
+    var helperUpdating: Set<UUID> = []
+    var serviceDockerContainers: [DockerContainer] = []
+    var serviceDockerUpdating: [DockerEndpoint] = []
+    var serviceDockerReady = false
+    var serviceHostStatuses: [UUID: HostStatusSnapshot] = [:]
+    var dockerProbed: Set<UUID> = []
+    var dockerFailed: Set<UUID> = []
+    var dockerProbing: Set<UUID> = []
+    var helperPoller: Task<Void, Never>?
+    public internal(set) var tunnelTraffic: [UUID: TunnelTrafficSnapshot] = [:]
+    public var dockerOutput: DockerCommandOutput?
     public internal(set) var sessionLogs: [SessionLogMetadata] = []
     public internal(set) var terminalApplications: [TerminalApplication] = [.other]
     public internal(set) var openSSH = OpenSSHDiscoverySnapshot()
@@ -22,6 +48,8 @@ public final class TerminatorAppModel {
     public internal(set) var loadingImportSourceIDs: Set<String> = []
     public internal(set) var externalImportBundles: [String: ExternalImportBundle] = [:]
     public var openSSHResultMessage: String?
+    /// Suppresses one-off import alerts while a catalog picker imports several records.
+    public var suppressesImportAnnouncements = false
     public let connectionPrompts: ConnectionPromptCenter
     public var connectionHost: HostProfile?
     public internal(set) var backgroundConnectionHost: HostProfile?
@@ -54,8 +82,13 @@ public final class TerminatorAppModel {
     let externalImportService: (any ExternalImportService)?
     let tunnelRepository: (any TunnelRepository)?
     let tunnelController: (any SSHTunnelControlling)?
+    let snippetRepository: (any SnippetRepository)?
+    let activityLog: (any ActivityLogRecording)?
     var connectionMonitors: [UUID: Task<Void, Never>] = [:]
     var tunnelMonitor: Task<Void, Never>?
+    var dockerMonitor: Task<Void, Never>?
+    var statusMonitor: Task<Void, Never>?
+    var trafficMonitor: Task<Void, Never>?
 
     public init(
         capabilities: AppCapabilities,
@@ -81,6 +114,8 @@ public final class TerminatorAppModel {
         self.externalImportService = dependencies.externalImportService
         self.tunnelRepository = dependencies.tunnelRepository
         self.tunnelController = dependencies.tunnelController
+        self.snippetRepository = dependencies.snippetRepository
+        self.activityLog = dependencies.activityLog
         if dependencies.tunnelController != nil {
             tunnelMonitor = Task { [weak self] in
                 guard let phases = await self?.tunnelController?.tunnelPhases() else { return }
@@ -88,6 +123,27 @@ public final class TerminatorAppModel {
                     self?.tunnelPhases[event.id] = event.phase
                 }
             }
+            dockerMonitor = Task { [weak self] in
+                guard let inventory = await self?.tunnelController?.dockerInventory() else { return }
+                for await snapshot in inventory {
+                    self?.noteDocker(snapshot)
+                }
+            }
+            statusMonitor = Task { [weak self] in
+                guard let statuses = await self?.tunnelController?.hostStatuses() else { return }
+                for await snapshot in statuses {
+                    self?.noteServiceStatus(snapshot)
+                }
+            }
+            trafficMonitor = Task { [weak self] in
+                guard let traffic = await self?.tunnelController?.tunnelTraffic() else { return }
+                for await snapshot in traffic {
+                    self?.tunnelTraffic[snapshot.id] = snapshot
+                }
+            }
+        }
+        if dependencies.externalTerminalService != nil || dependencies.tunnelController != nil {
+            startHelperPolling()
         }
     }
 
@@ -110,7 +166,9 @@ public final class TerminatorAppModel {
         openSSHService: (any OpenSSHIntegrationService)? = nil,
         externalImportService: (any ExternalImportService)? = nil,
         tunnelRepository: (any TunnelRepository)? = nil,
-        tunnelController: (any SSHTunnelControlling)? = nil
+        tunnelController: (any SSHTunnelControlling)? = nil,
+        snippetRepository: (any SnippetRepository)? = nil,
+        activityLog: (any ActivityLogRecording)? = nil
     ) {
         self.init(
             capabilities: capabilities,
@@ -131,7 +189,9 @@ public final class TerminatorAppModel {
                 openSSHService: openSSHService,
                 externalImportService: externalImportService,
                 tunnelRepository: tunnelRepository,
-                tunnelController: tunnelController
+                tunnelController: tunnelController,
+                snippetRepository: snippetRepository,
+                activityLog: activityLog
             ),
             connectionPrompts: connectionPrompts
         )
@@ -165,8 +225,19 @@ public final class TerminatorAppModel {
     }
 
     private func loadCatalog() async throws {
-        hosts = try await hostRepository.listHosts(includeDeleted: false)
-        if let tunnelRepository { tunnels = try await tunnelRepository.listTunnels(includeDeleted: false) }
+        let allHosts = try await hostRepository.listHosts(includeDeleted: true)
+        hosts = allHosts.filter { !$0.isDeleted }
+        archivedHosts = allHosts.filter(\.isDeleted)
+        if let tunnelRepository {
+            let allTunnels = try await tunnelRepository.listTunnels(includeDeleted: true)
+            tunnels = allTunnels.filter { !$0.isDeleted }
+            archivedTunnels = allTunnels.filter(\.isDeleted)
+        }
+        if let snippetRepository {
+            let allSnippets = try await snippetRepository.listSnippets(includeDeleted: true)
+            snippets = allSnippets.filter { !$0.isDeleted }
+            archivedSnippets = allSnippets.filter(\.isDeleted)
+        }
         onHostCatalogChanged?(hosts)
         credentials = try await credentialRepository.listCredentials(includeDeleted: true)
         identities = try await identityRepository.listIdentities(includeDeleted: true)
@@ -177,6 +248,7 @@ public final class TerminatorAppModel {
             terminalApplications = await externalTerminalService.installedApplications()
         }
         if capabilities.externalFileAccess { await refreshImportSources() }
+        trackHostConnections()
     }
 
     private static func isTransientStoreError(_ error: Error) -> Bool {
@@ -202,4 +274,65 @@ public final class TerminatorAppModel {
         presentedError = nil
     }
 
+    public func runDocker(_ container: DockerContainer, action: DockerControlAction) async {
+        if await runDockerThroughHelper(container, action: action) { return }
+        guard let tunnelController else { return }
+        do {
+            let text = try await tunnelController.controlDocker(
+                endpoint: container.endpoint,
+                containerID: container.id,
+                action: action
+            )
+            if action == .logs || action == .stats {
+                dockerOutput = DockerCommandOutput(
+                    title: "\(container.name) · \(action.rawValue)",
+                    text: text.isEmpty ? " " : text
+                )
+            }
+        } catch {
+            present(error)
+        }
+    }
+
+    public func runDocker(_ containers: [DockerContainer], action: DockerControlAction, title: String) async {
+        let targets = containers.filter { DockerGroup.applies(action, to: $0) }
+        guard !targets.isEmpty else { return }
+        if action == .logs {
+            var sections: [String] = []
+            for container in containers {
+                let text = await dockerLogText(container)
+                let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                sections.append("\(container.name)\n\(body.isEmpty ? "—" : body)")
+            }
+            dockerOutput = DockerCommandOutput(
+                title: "\(title) · \(action.rawValue)",
+                text: sections.joined(separator: "\n\n")
+            )
+            return
+        }
+        for container in targets {
+            await runDocker(container, action: action)
+        }
+    }
+
+    public func openContainerShell(_ container: DockerContainer) async {
+        guard let tunnelController else { return }
+        do {
+            try await tunnelController.openContainerShell(endpoint: container.endpoint, containerID: container.id)
+        } catch {
+            present(error)
+        }
+    }
+}
+
+public struct DockerCommandOutput: Identifiable, Equatable, Sendable {
+    public let id: UUID
+    public var title: String
+    public var text: String
+
+    public init(id: UUID = UUID(), title: String, text: String) {
+        self.id = id
+        self.title = title
+        self.text = text
+    }
 }

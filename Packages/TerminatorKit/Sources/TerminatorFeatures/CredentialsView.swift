@@ -10,7 +10,6 @@ import UIKit
 
 struct CredentialsView: View {
     @Environment(TerminatorAppModel.self) private var model
-    @Binding private var isArchivePresented: Bool
     @State private var searchText = ""
     @State private var accessKeyDraft: AccessKeyDraft?
     @State private var identityDraft: IdentityDraft?
@@ -25,24 +24,21 @@ struct CredentialsView: View {
     @State private var exportingCredential: CredentialMetadata?
     @State private var isExportingCredential = false
     @State private var collapsedCredentialGroups: Set<String> = []
-    private var dismissedHints = DismissedHintsStore.shared
-    @State private var pendingExternalKey: ExternalImportAccessKey?
-    @State private var pendingExternalIdentity: ExternalImportIdentity?
-    @State private var pendingExternalBundle: ExternalImportBundle?
-
-    init(isArchivePresented: Binding<Bool>) {
-        _isArchivePresented = isArchivePresented
-    }
+    @State private var tray: CatalogTray?
+    @State private var traySelection: Set<String> = []
+    @State private var isImportingTray = false
 
     var body: some View {
         InspectorLayout(content: {
             VStack(spacing: 0) {
-                CatalogImportBanner(hint: .credentialsImportBanner)
+                CatalogImportBanner(hint: .credentialsImportBanner) { openTray(.source($0.id)) }
                 credentialsContent
             }
         }, inspector: {
             AnyView(ZStack {
-            if let accessKeyDraft {
+            if let tray {
+                credentialPicker(tray)
+            } else if let accessKeyDraft {
                 AccessKeyEditor(
                     draft: accessKeyDraft,
                     inline: true,
@@ -51,9 +47,6 @@ struct CredentialsView: View {
                     isDiscarding: isDiscarding
                 ) { value in
                     let saved = await model.saveAccessKey(value)
-                    if saved != nil, let key = pendingExternalKey, let bundle = pendingExternalBundle {
-                        model.consumeExternalAccessKey(key, sourceID: bundle.source.id)
-                    }
                     if (isExplicitAccessKeyImport || value.credentialID == nil), saved != nil { closeInspector() }
                 } onClose: {
                     closeInspector()
@@ -72,18 +65,12 @@ struct CredentialsView: View {
                 IdentityEditor(
                     draft: identityDraft,
                     inline: true,
-                    explicitImport: pendingExternalIdentity != nil,
+                    explicitImport: false,
                     onDraftChange: updateIdentityDraft,
                     isDiscarding: isDiscarding
                 ) { value in
-                    if let identity = pendingExternalIdentity, let bundle = pendingExternalBundle {
-                        if await model.importExternalIdentity(identity, from: bundle, editedDraft: value) != nil {
-                            closeInspector()
-                        }
-                    } else {
-                        let saved = await model.saveIdentity(value)
-                        if value.id == nil, saved { closeInspector() }
-                    }
+                    let saved = await model.saveIdentity(value)
+                    if value.id == nil, saved { closeInspector() }
                 } onClose: {
                     closeInspector()
                 }
@@ -93,7 +80,7 @@ struct CredentialsView: View {
             }
             .animation(.easeInOut(duration: 0.22), value: inspectorSessionID))
         }, inspectorWidth: InspectorMetrics.compactWidth,
-           isInspectorPresented: hasInspector,
+           isInspectorPresented: hasInspector || tray != nil,
            onContentInteraction: { closeInspector() })
         .navigationTitle(FeatureL10n.text(.overviewCredentials))
         .toolbar {
@@ -162,18 +149,13 @@ struct CredentialsView: View {
     private var credentialsToolbar: some ToolbarContent {
         ToolbarSpacer(.flexible)
         ToolbarItem {
-            Button(FeatureL10n.text(.actionArchive), systemImage: "archivebox") { isArchivePresented = true }
-                .accessibilityIdentifier("archive-button")
-        }
-        ToolbarSpacer(.fixed)
-        ToolbarItem {
             ToolbarSearchField(text: $searchText, prompt: "Search identities and credentials")
         }
         .sharedBackgroundVisibility(.hidden)
         ToolbarSpacer(.fixed)
         ToolbarItemGroup {
             addMenu
-            ExternalImportMenu(hint: .credentialsImportBanner)
+            ExternalImportMenu { openTray($0) }
         }
     }
 
@@ -208,14 +190,13 @@ struct CredentialsView: View {
             .filter { matchesSearch($0.name) || matchesSearch($0.username) }
         let available = activeCredentials
             .filter { matchesSearch($0.label) }
-        let openSSHKeys = availableOpenSSHKeys
-        if activeIdentities.isEmpty && activeCredentials.isEmpty && !hasAvailableImports {
+        if activeIdentities.isEmpty && activeCredentials.isEmpty && !showsImportBanner {
             ContentUnavailableView {
                 Label(FeatureL10n.text(.featureCredentialsNoIdentitiesOrCredentials), systemImage: "key")
             } description: {
                 Text(FeatureL10n.text(.featureCredentialsCreateAnIdentityOrAddACredential))
-            } actions: { addMenu.buttonStyle(.glassProminent).tint(.blue) }
-        } else if identities.isEmpty && available.isEmpty && !hasAvailableImports {
+            } actions: { addMenu.emptyCatalogAddStyle() }
+        } else if identities.isEmpty && available.isEmpty && !showsImportBanner {
             ContentUnavailableView.search(text: searchText)
         } else {
             ScrollView {
@@ -238,37 +219,6 @@ struct CredentialsView: View {
                             LazyVGrid(columns: credentialGridColumns, alignment: .leading, spacing: CredentialCardMetrics.spacing) {
                                 ForEach(available) { credential in
                                     credentialRow(credential)
-                                }
-                            }
-                        }
-                    }
-                    if model.capabilities.externalFileAccess {
-                        LazyVGrid(columns: credentialGridColumns, alignment: .leading, spacing: CredentialCardMetrics.spacing) {
-                            ForEach(openSSHKeys) { key in
-                                credentialCardLabel(
-                                    title: key.label,
-                                    subtitle: key.importError ?? key.fingerprint ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : key.privateKeyURL.path),
-                                    icon: key.importError == nil ? "key.horizontal" : "exclamationmark.triangle.fill",
-                                    iconColor: key.importError == nil ? .secondary : .red
-                                )
-                                .onTapGesture {
-                                    if key.importError == nil { openDiscoveredKey(key) }
-                                }
-                                .contextMenu {
-                                    if key.importError == nil {
-                                        Button(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down") {
-                                            openDiscoveredKey(key)
-                                        }
-                                    }
-                                }
-                                .help(key.importError ?? key.privateKeyURL.path)
-                            }
-                            ForEach(model.loadedExternalImportBundles, id: \.source.id) { bundle in
-                                ForEach(bundle.identities.filter(matchesSearch)) { identity in
-                                    externalIdentityRow(identity, bundle: bundle)
-                                }
-                                ForEach(bundle.accessKeys.filter(matchesSearch)) { key in
-                                    externalKeyRow(key, bundle: bundle)
                                 }
                             }
                         }
@@ -305,10 +255,6 @@ struct CredentialsView: View {
                     Button(FeatureL10n.text(.credentialsPurge), systemImage: "trash", role: .destructive) { pendingPurge = credential }
                 }
         }
-    }
-
-    private var availableOpenSSHKeys: [DiscoveredAccessKey] {
-        model.openSSH.accessKeys.filter { $0.status != .existing && matchesSearch($0.label) }
     }
 
     private func exportToOpenSSH(_ credential: CredentialMetadata) {
@@ -351,9 +297,17 @@ struct CredentialsView: View {
         selectedCredential = nil
         identityDraft = nil
         isImportingOpenSSHKey = false
-        pendingExternalKey = nil
-        pendingExternalIdentity = nil
-        pendingExternalBundle = nil
+        tray = nil
+        traySelection = []
+    }
+
+    private func openTray(_ next: CatalogTray) {
+        closeInspector()
+        traySelection = []
+        tray = next
+        guard case .source(let id) = next,
+              let source = model.importSources.first(where: { $0.id == id }) else { return }
+        Task { await model.loadImportSource(source) }
     }
 
     private func updateAccessKeyDraft(_ draft: AccessKeyDraft) { accessKeyDraft = draft }
@@ -370,6 +324,7 @@ struct CredentialsView: View {
     }
 
     private func openAccessKey(_ draft: AccessKeyDraft, importingFromOpenSSH: Bool = false) {
+        tray = nil
         isDiscardingInspector = false
         inspectorSessionID = UUID()
         isImportingOpenSSHKey = importingFromOpenSSH
@@ -378,15 +333,8 @@ struct CredentialsView: View {
         identityDraft = nil
     }
 
-    private func openDiscoveredKey(_ key: DiscoveredAccessKey) {
-        let draft = model.draft(for: key)
-        closeInspector()
-        DispatchQueue.main.async {
-            openAccessKey(draft, importingFromOpenSSH: true)
-        }
-    }
-
     private func openCredential(_ credential: CredentialMetadata) {
+        tray = nil
         isDiscardingInspector = false
         inspectorSessionID = UUID()
         isImportingOpenSSHKey = false
@@ -396,6 +344,7 @@ struct CredentialsView: View {
     }
 
     private func openIdentity(_ draft: IdentityDraft) {
+        tray = nil
         isDiscardingInspector = false
         inspectorSessionID = UUID()
         isImportingOpenSSHKey = false
@@ -405,23 +354,10 @@ struct CredentialsView: View {
     }
 
     private var showsImportBanner: Bool {
-        !dismissedHints.isDismissed(.credentialsImportBanner)
+        !DismissedHintsStore.shared.isDismissed(.credentialsImportBanner)
             && model.capabilities.externalFileAccess
             && !model.importSources.isEmpty
     }
-
-    private var hasAvailableImports: Bool {
-        showsImportBanner || !availableOpenSSHKeys.isEmpty
-            || model.loadedExternalImportBundles.contains { bundle in
-                !bundle.identities.filter(matchesSearch).isEmpty || !bundle.accessKeys.filter(matchesSearch).isEmpty
-            }
-    }
-
-    private func matchesSearch(_ identity: ExternalImportIdentity) -> Bool {
-        matchesSearch(identity.label) || matchesSearch(identity.username)
-    }
-
-    private func matchesSearch(_ key: ExternalImportAccessKey) -> Bool { matchesSearch(key.label) }
 
     private func sectionHeader(_ title: String, id: String) -> some View {
         Button {
@@ -439,36 +375,135 @@ struct CredentialsView: View {
         }.buttonStyle(.plain)
     }
 
-    private func externalKeyRow(_ key: ExternalImportAccessKey, bundle: ExternalImportBundle) -> some View {
-        Button {
-            closeInspector()
-            pendingExternalKey = key
-            pendingExternalBundle = bundle
-            openAccessKey(model.externalAccessKeyDraft(key), importingFromOpenSSH: true)
-        } label: {
-            credentialCardLabel(
-                title: key.label.isEmpty ? FeatureL10n.text(.credentialsAccessKey) : key.label,
-                subtitle: FeatureL10n.text(.externalImportAccessKeyDetail, bundle.source.displayName),
-                icon: "key.horizontal"
-            )
-        }.buttonStyle(.plain)
+    private func credentialPicker(_ tray: CatalogTray) -> some View {
+        let archive = tray == .archive
+        return CatalogPickerPanel(
+            title: archive ? FeatureL10n.text(.actionArchive) : sourceTitle(tray),
+            subtitle: FeatureL10n.text(archive ? .catalogChooseArchive : .catalogChooseImport),
+            records: credentialPicks(tray),
+            isLoading: isLoading(tray),
+            primaryTitle: FeatureL10n.text(archive ? .catalogRestore : .actionImport),
+            destructiveTitle: archive ? FeatureL10n.text(.catalogDelete) : nil,
+            emptyTitle: FeatureL10n.text(archive ? .featureArchiveArchiveIsEmpty : .catalogNothingToImport),
+            selection: $traySelection,
+            isWorking: isImportingTray,
+            onPrimary: { Task { await applyCredentialTray(tray, purge: false) } },
+            onDestructive: { Task { await applyCredentialTray(tray, purge: true) } },
+            onClose: closeInspector
+        )
     }
 
-    private func externalIdentityRow(_ identity: ExternalImportIdentity, bundle: ExternalImportBundle) -> some View {
-        Button {
-            closeInspector()
-            pendingExternalIdentity = identity
-            pendingExternalBundle = bundle
-            isDiscardingInspector = false
-            inspectorSessionID = UUID()
-            identityDraft = model.externalIdentityDraft(identity)
-        } label: {
-            credentialCardLabel(
-                title: identity.label.isEmpty ? identity.username : identity.label,
-                subtitle: FeatureL10n.text(.externalImportIdentityDetail, bundle.source.displayName),
-                icon: "person.badge.key"
-            )
-        }.buttonStyle(.plain)
+    private func sourceTitle(_ tray: CatalogTray) -> String {
+        guard case .source(let id) = tray else { return FeatureL10n.text(.actionImport) }
+        return model.importSources.first { $0.id == id }?.displayName ?? FeatureL10n.text(.actionImport)
+    }
+
+    private func isLoading(_ tray: CatalogTray) -> Bool {
+        guard case .source(let id) = tray else { return false }
+        return model.loadingImportSourceIDs.contains(id) || (id == ExternalImportSourceKind.openSSH.rawValue && model.isScanningOpenSSH)
+    }
+
+    private func credentialPicks(_ tray: CatalogTray) -> [CatalogPick] {
+        switch tray {
+        case .archive:
+            let identities = model.identities.filter(\.isDeleted).map { identity in
+                CatalogPick(
+                    id: "identity|\(identity.id.uuidString)",
+                    title: identityDisplayName(identity),
+                    subtitle: identity.username,
+                    symbol: "person.badge.key"
+                )
+            }
+            let keys = model.credentials.filter { $0.isDeleted && $0.isSecretAvailable }.map { credential in
+                CatalogPick(
+                    id: "credential|\(credential.id.uuidString)",
+                    title: credential.label,
+                    subtitle: FeatureL10n.text(.credentialStatusArchived),
+                    symbol: "key.horizontal"
+                )
+            }
+            return identities + keys
+        case .source(let id):
+            guard let source = model.importSources.first(where: { $0.id == id }) else { return [] }
+            if source.kind == .openSSH {
+                return model.openSSH.accessKeys.filter { $0.status != .existing }.map { key in
+                    let enabled = key.importError == nil && !key.isEncrypted
+                    let subtitle = key.importError ?? (key.isEncrypted ? FeatureL10n.text(.opensshEncryptedKey) : (key.fingerprint ?? key.privateKeyURL.lastPathComponent))
+                    return CatalogPick(id: "openssh|\(key.id)", title: key.label, subtitle: subtitle, symbol: "key.horizontal", isEnabled: enabled)
+                }
+            }
+            let bundle = model.externalImportBundles[id]
+            let identities = (bundle?.identities ?? []).map { identity in
+                CatalogPick(
+                    id: "bundle-identity|\(identity.id)",
+                    title: identity.label.isEmpty ? identity.username : identity.label,
+                    subtitle: identity.username,
+                    symbol: "person.badge.key"
+                )
+            }
+            let keys = (bundle?.accessKeys ?? []).map { key in
+                CatalogPick(
+                    id: "bundle-key|\(key.id)",
+                    title: key.label.isEmpty ? FeatureL10n.text(.credentialsAccessKey) : key.label,
+                    subtitle: source.displayName,
+                    symbol: "key.horizontal"
+                )
+            }
+            return identities + keys
+        }
+    }
+
+    private func applyCredentialTray(_ tray: CatalogTray, purge: Bool) async {
+        guard !isImportingTray else { return }
+        isImportingTray = true
+        defer { isImportingTray = false }
+        let chosen = traySelection
+        switch tray {
+        case .archive:
+            for id in chosen {
+                let saved: Bool
+                if id.hasPrefix("identity|"), let uuid = UUID(uuidString: String(id.dropFirst("identity|".count))) {
+                    saved = purge ? await model.purgeIdentity(id: uuid) : await model.restoreIdentity(id: uuid)
+                } else if id.hasPrefix("credential|"), let uuid = UUID(uuidString: String(id.dropFirst("credential|".count))) {
+                    saved = purge ? await purgeCredential(uuid) : await model.restoreCredential(id: uuid)
+                } else {
+                    saved = false
+                }
+                if saved { traySelection.remove(id) }
+            }
+        case .source(let sourceID):
+            guard let source = model.importSources.first(where: { $0.id == sourceID }) else { return }
+            model.suppressesImportAnnouncements = true
+            defer { model.suppressesImportAnnouncements = false }
+            if source.kind == .openSSH {
+                for key in model.openSSH.accessKeys where chosen.contains("openssh|\(key.id)") && key.importError == nil && !key.isEncrypted {
+                    if await model.saveAccessKey(model.draft(for: key)) != nil {
+                        traySelection.remove("openssh|\(key.id)")
+                    }
+                }
+                await model.refreshOpenSSH()
+            } else if let bundle = model.externalImportBundles[sourceID] {
+                for identity in bundle.identities where chosen.contains("bundle-identity|\(identity.id)") {
+                    if await model.importExternalIdentity(identity, from: bundle, editedDraft: model.externalIdentityDraft(identity)) != nil {
+                        traySelection.remove("bundle-identity|\(identity.id)")
+                    }
+                }
+                guard let bundle = model.externalImportBundles[sourceID] else { return }
+                for key in bundle.accessKeys where chosen.contains("bundle-key|\(key.id)") {
+                    if await model.saveAccessKey(model.externalAccessKeyDraft(key)) != nil {
+                        model.consumeExternalAccessKey(key, sourceID: sourceID)
+                        traySelection.remove("bundle-key|\(key.id)")
+                    }
+                }
+            }
+        }
+    }
+
+    private func purgeCredential(_ id: UUID) async -> Bool {
+        let before = model.credentials.first { $0.id == id }?.isSecretAvailable
+        await model.purgeCredential(id: id)
+        let after = model.credentials.first { $0.id == id }
+        return before == true && (after == nil || after?.isSecretAvailable == false)
     }
 
     private func credentialCardLabel(

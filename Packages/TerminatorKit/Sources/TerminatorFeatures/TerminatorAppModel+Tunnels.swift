@@ -45,8 +45,35 @@ extension TerminatorAppModel {
         do {
             try await tunnelRepository.deleteTunnel(id: id)
             tunnelPhases[id] = nil
+            ArchiveHintStore.shared.arm()
             await load()
         } catch { present(error) }
+    }
+
+    public func restoreTunnel(id: UUID) async -> Bool {
+        guard let tunnelRepository else { return false }
+        do {
+            try await tunnelRepository.restoreTunnel(id: id)
+            await load()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    public func purgeTunnel(id: UUID) async -> Bool {
+        guard let tunnelRepository else { return false }
+        await stopTunnel(id: id)
+        do {
+            try await tunnelRepository.purgeTunnel(id: id)
+            tunnelPhases[id] = nil
+            await load()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
     }
 
     public func startTunnel(id: UUID) async {

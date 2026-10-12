@@ -73,4 +73,19 @@ struct HostProfileTests {
         #expect(migrated.sessionPersistence == .none)
         #expect(migrated.connectCommands.isEmpty)
     }
+    @Test("Normalizes an empty Docker prefix and rejects shell syntax")
+    func dockerCommandPrefix() throws {
+        let empty = HostProfile(
+            displayName: "Edge", hostname: "edge.example.com", username: "root", dockerCommandPrefix: "  "
+        )
+        #expect(try empty.validated().dockerCommandPrefix == "docker")
+        let injected = HostProfile(
+            displayName: "Edge", hostname: "edge.example.com", username: "root",
+            dockerCommandPrefix: "docker; rm -rf /"
+        )
+        #expect(throws: HostValidationError.invalidDockerCommandPrefix) {
+            try injected.validated()
+        }
+    }
+
 }

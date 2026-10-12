@@ -10,6 +10,7 @@ public final class DismissedHintsStore {
         case hostsImportBanner
         case credentialsImportBanner
         case tunnelsImportBanner
+        case snippetsImportBanner
     }
 
     private static let prefix = "dismissedHint."

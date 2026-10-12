@@ -49,16 +49,20 @@ enum TerminatorConnectionServiceMain {
         let authenticationResolver = AuthenticationResolver(
             credentialRepository: store, identityRepository: store, secretStore: secretStore
         )
+        let desiredWork = DesiredWorkStore(directory: ConnectionServicePaths.applicationSupport)
         let coordinator = NIOSSHConnectionCoordinator(
             authenticationResolver: authenticationResolver,
             accessKeyService: accessKeyService,
             knownHosts: store,
             logRepository: store,
             secretStore: secretStore,
-            logBaseURL: ConnectionServicePaths.sessionLogURL
+            logBaseURL: ConnectionServicePaths.sessionLogURL,
+            desiredWork: desiredWork
         )
         let broker = TerminalAttachBroker(
-            coordinator: coordinator, directoryURL: ConnectionServicePaths.attachDirectoryURL
+            coordinator: coordinator,
+            directoryURL: ConnectionServicePaths.attachDirectoryURL,
+            desiredWork: desiredWork
         )
         let prompting = ConnectionServicePrompter()
         let launcher = ServiceTerminalLauncher()
@@ -67,7 +71,9 @@ enum TerminatorConnectionServiceMain {
             broker: broker,
             hostRepository: store,
             prompting: prompting,
-            terminalLauncher: launcher
+            terminalLauncher: launcher,
+            desiredWork: desiredWork,
+            tunnelRepository: store
         )
         await prompting.attach(runtime)
         await coordinator.setTunnelPhaseHandler { [weak runtime] id, phase in
@@ -75,6 +81,7 @@ enum TerminatorConnectionServiceMain {
         }
         try await runtime.start()
         try await runtime.waitUntilStopped()
+        await coordinator.finishOpenLogs()
     }
 }
 #else

@@ -52,7 +52,14 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         var remoteCommand: String?
         var channel: Channel
         var continuation: AsyncStream<SSHSessionEvent>.Continuation
+        var listeners: [UUID: AsyncStream<SSHSessionEvent>.Continuation] = [:]
         var log: SessionLogWriter
+    }
+
+    struct DockerShellState {
+        var channel: Channel
+        var buffer = ""
+        var closed = false
     }
 
     let group: MultiThreadedEventLoopGroup
@@ -64,15 +71,59 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
     let logBaseURL: URL
     var pools: [UUID: Pool] = [:]
     var phases: [UUID: SSHConnectionPhase] = [:]
+    var reportedTunnelPhases: [UUID: SSHConnectionPhase] = [:]
     var sessions: [UUID: ActiveSession] = [:]
     var reconnectTasks: [UUID: Task<Void, Never>] = [:]
     var prepareTasks: [UUID: Task<Void, Error>] = [:]
     var retainedHosts: Set<UUID> = []
+    var tunnelRetryTasks: [UUID: Task<Void, Never>] = [:]
+    var desiredWork: DesiredWorkStore?
+    var sessionClosedHandler: (@Sendable (UUID) async -> Void)?
+    var dockerShells: [UUID: DockerShellState] = [:]
     var stateContinuations: [UUID: [UUID: AsyncStream<SSHConnectionPhase>.Continuation]] = [:]
     let forwardRouter = TunnelForwardRouter()
     var desiredTunnels: [UUID: TunnelProfile] = [:]
     var runningTunnels: [UUID: RunningTunnel] = [:]
     var tunnelPhaseHandler: (@Sendable (UUID, SSHConnectionPhase) -> Void)?
+    func setSessionClosedHandler(_ handler: @escaping @Sendable (UUID) async -> Void) {
+        sessionClosedHandler = handler
+    }
+
+    func phaseSnapshot() -> [UUID: SSHConnectionPhase] { phases }
+
+    func tunnelPhaseSnapshot() -> [UUID: SSHConnectionPhase] { reportedTunnelPhases }
+
+    func retainedHostIDs() -> Set<UUID> { retainedHosts }
+    public func finishOpenLogs() async {
+        for session in sessions.values {
+            await session.log.finish(as: .incomplete)
+        }
+    }
+
+    public func settleOrphanedLogs() async {
+        var live: Set<UUID> = []
+        for session in sessions.values {
+            live.insert(await session.log.metadata.id)
+        }
+        await SessionLogWriter.settleOrphanedActiveLogs(repository: logRepository, liveLogIDs: live)
+    }
+
+    public func activePoolHostIDs() -> [UUID] {
+        pools.compactMap { id, pool in pool.channel.isActive ? id : nil }
+    }
+
+    public func exec(hostID: UUID, command: String, timeout: Duration = .seconds(6), partialOnTimeout: Bool = false) async throws -> SSHExecResult {
+        guard let host = pools[hostID]?.host else { throw SSHTransportError.sessionUnavailable }
+        return try await exec(host: host, command: command, timeout: timeout, partialOnTimeout: partialOnTimeout)
+    }
+
+    var tunnelMeters: [UUID: TunnelTrafficMeter] = [:]
+
+    func tunnelTrafficSnapshots() -> [TunnelTrafficSnapshot] {
+        tunnelMeters.map { id, meter in meter.snapshot(id: id) }
+    }
+
+
 
     public init(
         authenticationResolver: any AuthenticationResolving,
@@ -81,6 +132,7 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         logRepository: any SessionLogRepository,
         secretStore: any SecretStore,
         logBaseURL: URL,
+        desiredWork: DesiredWorkStore? = nil,
         threadCount: Int = 1
     ) {
         self.authenticationResolver = authenticationResolver
@@ -89,17 +141,29 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
         self.logRepository = logRepository
         self.secretStore = secretStore
         self.logBaseURL = logBaseURL
+        self.desiredWork = desiredWork
         self.group = MultiThreadedEventLoopGroup(numberOfThreads: max(1, threadCount))
     }
 
     deinit { try? group.syncShutdownGracefully() }
 
     public func prepare(host: HostProfile, prompting: any SSHConnectionPrompting) async throws {
+        if host.alwaysConnected { retainedHosts.insert(host.id) }
+        if reconnectTasks[host.id] != nil,
+           host.alwaysConnected,
+           pools[host.id]?.channel.isActive != true,
+           pools[host.id].map({ $0.host.hostname == host.hostname && $0.host.port == host.port && $0.host.authentication == host.authentication }) != false {
+            return
+        } else if reconnectTasks[host.id] != nil {
+            reconnectTasks[host.id]?.cancel()
+            reconnectTasks[host.id] = nil
+        }
         if let existing = pools[host.id], existing.channel.isActive {
             if existing.host.hostname == host.hostname,
                existing.host.port == host.port,
                existing.host.authentication == host.authentication { return }
             await disconnect(hostID: host.id)
+            if host.alwaysConnected { retainedHosts.insert(host.id) }
         }
         if let pending = prepareTasks[host.id] { return try await pending.value }
         let task = Task { try await self.establish(host: host, prompting: prompting) }
@@ -109,11 +173,17 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
             prepareTasks[host.id] = nil
         } catch {
             prepareTasks[host.id] = nil
+            if host.alwaysConnected { await retain(host: host, prompting: prompting) }
             throw error
         }
     }
 
     func establish(host: HostProfile, prompting: any SSHConnectionPrompting) async throws {
+        if pools[host.id]?.channel.isActive == true {
+            retainedHosts.insert(host.id)
+            publishLink(for: host.id)
+            return
+        }
         setPhase(.resolving, for: host.id)
         let identity = try await authenticationResolver.resolve(host: host, prompting: prompting)
         setPhase(.authenticating, for: host.id)
@@ -178,11 +248,9 @@ public actor NIOSSHConnectionCoordinator: SSHConnectionCoordinating {
             }
             pools[host.id] = Pool(host: host, prompting: prompting, channel: channel)
             retainedHosts.insert(host.id)
-            // A live TCP channel is not yet an authenticated SSH connection.
-            // `.connected` is set only after the first child session channel
-            // has been accepted by the server. A retained transport with no
-            // attached terminal still counts as connected for the host list.
-            setPhase(.connected, for: host.id)
+            // The transport is authenticated. An open session is `.connected`.
+            // A retained transport with no session is `.agent`.
+            publishLink(for: host.id)
         } catch {
             setPhase(.failed(message: error.localizedDescription), for: host.id)
             throw error

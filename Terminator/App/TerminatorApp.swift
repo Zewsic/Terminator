@@ -17,6 +17,8 @@ struct TerminatorApp: App {
     private let modelContainer: ModelContainer
     @NSApplicationDelegateAdaptor(TerminatorAppDelegate.self) private var appDelegate
     @State private var appModel: TerminatorAppModel
+    @AppStorage(AppSection.showServicesTabKey) private var showServicesTab = true
+    @AppStorage(AppSection.showTasksTabKey) private var showTasksTab = true
 
     init() {
         do {
@@ -39,7 +41,8 @@ struct TerminatorApp: App {
                     userPresenceAuthorizer: LocalAuthenticationAuthorizer(),
                     dockerService: DemoDockerService(),
                     sessionLogRepository: store,
-                    tunnelRepository: store
+                    tunnelRepository: store,
+                    snippetRepository: store
                 )
             )
             #else
@@ -73,7 +76,9 @@ struct TerminatorApp: App {
                 openSSHService: openSSHService,
                 externalImportService: externalImportService,
                 tunnelRepository: store,
-                tunnelController: connectionClient
+                tunnelController: connectionClient,
+                snippetRepository: store,
+                activityLog: SessionCommandLogger(repository: store, secretStore: secretStore, baseURL: logURL)
             )
             connectionPrompts.onPrompt = {
                 appModel.revealBackgroundConnectionIfNeeded()
@@ -102,7 +107,10 @@ struct TerminatorApp: App {
             TerminatorGUIActions.connectHost = { hostID in
                 Task { await appModel.connectInBackground(hostID: hostID, with: .terminal) }
             }
-            Task { await appModel.load() }
+            Task {
+                await SessionLogMaintenance.settleIfHelperIsIdle(repository: store)
+                await appModel.load()
+            }
             Task {
                 await connectionClient.setPromptHandler { envelope in
                     await appModel.answerServicePrompt(envelope)
@@ -143,6 +151,21 @@ struct TerminatorApp: App {
         #if !APP_STORE
         .defaultLaunchBehavior(.suppressed)
         #endif
+        .commands {
+            CommandGroup(after: .sidebar) {
+                Toggle(AppL10n.text(.settingsShowServicesTab), isOn: $showServicesTab)
+                Toggle(AppL10n.text(.settingsShowTasksTab), isOn: $showTasksTab)
+            }
+            CommandGroup(after: .help) {
+                Divider()
+                if let telegram = URL(string: "https://t.me/zewsic") {
+                    Link(AppL10n.text(.helpTelegram), destination: telegram)
+                }
+                if let profile = URL(string: "https://x.com/zewsic_") {
+                    Link(AppL10n.text(.helpX), destination: profile)
+                }
+            }
+        }
     }
 }
 

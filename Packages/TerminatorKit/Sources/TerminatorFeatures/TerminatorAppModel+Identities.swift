@@ -78,8 +78,35 @@ extension TerminatorAppModel {
         }
         do {
             try await identityRepository.deleteIdentity(id: id)
+            ArchiveHintStore.shared.arm()
             await load()
         } catch { present(error) }
+    }
+
+    public func restoreIdentity(id: UUID) async -> Bool {
+        do {
+            try await identityRepository.restoreIdentity(id: id)
+            await load()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
+    }
+
+    public func purgeIdentity(id: UUID) async -> Bool {
+        guard identityUsageCount(id: id) == 0 else {
+            present(IdentityValidationError.identityInUse)
+            return false
+        }
+        do {
+            try await identityRepository.purgeIdentity(id: id)
+            await load()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
     }
 
     public func deleteCredential(id: UUID) async {
@@ -89,8 +116,23 @@ extension TerminatorAppModel {
         }
         do {
             try await credentialRepository.deleteCredential(id: id)
+            ArchiveHintStore.shared.arm()
             await load()
         } catch { present(error) }
+    }
+
+    public func restoreCredential(id: UUID) async -> Bool {
+        guard var credential = credentials.first(where: { $0.id == id }),
+              credential.isDeleted, credential.isSecretAvailable else { return false }
+        credential.deletedAt = nil
+        do {
+            try await credentialRepository.saveCredential(credential)
+            await load()
+            return true
+        } catch {
+            present(error)
+            return false
+        }
     }
 
     public func purgeCredential(id: UUID) async {

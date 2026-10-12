@@ -3,17 +3,17 @@ import TerminatorCore
 
 struct CatalogImportBanner: View {
     let hint: DismissedHintsStore.Hint
+    var allowsOpenSSH = true
+    let onOpen: (ExternalImportSource) -> Void
     @Environment(TerminatorAppModel.self) private var model
     private var dismissedHints = DismissedHintsStore.shared
 
     var body: some View {
         if showsBanner {
             ExternalImportBanner(
-                sources: model.availableImportSources,
+                sources: visibleSources,
                 loadingIDs: model.loadingImportSourceIDs,
-                onImport: { source in
-                    Task { await model.loadImportSource(source) }
-                },
+                onImport: onOpen,
                 onDismiss: {
                     withAnimation(.easeInOut(duration: 0.2)) {
                         dismissedHints.dismiss(hint)
@@ -26,38 +26,47 @@ struct CatalogImportBanner: View {
         }
     }
 
+    private var visibleSources: [ExternalImportSource] {
+        model.importSources.filter { allowsOpenSSH || $0.kind != .openSSH }
+    }
+
     private var showsBanner: Bool {
         !dismissedHints.isDismissed(hint)
             && model.capabilities.externalFileAccess
-            && !model.importSources.isEmpty
+            && !visibleSources.isEmpty
     }
 }
 
 struct ExternalImportMenu: View {
     @Environment(TerminatorAppModel.self) private var model
-    let hint: DismissedHintsStore.Hint
-    private var dismissedHints = DismissedHintsStore.shared
+    var allowsOpenSSH = true
+    let onSelect: (CatalogTray) -> Void
+    private var archiveHint = ArchiveHintStore.shared
 
     var body: some View {
-        if showsMenu {
-            Menu {
-                ForEach(model.importSources) { source in
-                    Button(source.displayName) {
-                        Task { await model.loadImportSource(source) }
-                    }
+        Menu {
+            ForEach(model.importSources.filter { allowsOpenSSH || $0.kind != .openSSH }) { source in
+                Button(source.displayName) { onSelect(.source(source.id)) }
                     .disabled(model.loadingImportSourceIDs.contains(source.id))
-                }
-            } label: {
-                Label(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down")
             }
-            .help(FeatureL10n.text(.externalImportBannerTitle))
+            if !model.importSources.filter({ allowsOpenSSH || $0.kind != .openSSH }).isEmpty { Divider() }
+            Button(FeatureL10n.text(.actionArchive), systemImage: "archivebox") {
+                onSelect(.archive)
+            }
+        } label: {
+            Label(FeatureL10n.text(.actionImport), systemImage: "square.and.arrow.down")
+        }
+        .help(archiveHint.isVisible ? FeatureL10n.text(.catalogArchiveHint) : FeatureL10n.text(.externalImportBannerTitle))
+        .popover(isPresented: hintPresented, arrowEdge: .bottom) {
+            Text(FeatureL10n.text(.catalogArchiveHint))
+                .font(.callout)
+                .padding(14)
+                .frame(width: 240)
         }
     }
 
-    private var showsMenu: Bool {
-        dismissedHints.isDismissed(hint)
-            && model.capabilities.externalFileAccess
-            && !model.importSources.isEmpty
+    private var hintPresented: Binding<Bool> {
+        Binding(get: { archiveHint.isVisible }, set: { if !$0 { archiveHint.dismiss() } })
     }
 }
 

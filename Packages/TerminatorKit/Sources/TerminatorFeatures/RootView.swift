@@ -6,9 +6,12 @@ import AppKit
 
 public struct RootView: View {
     @Environment(TerminatorAppModel.self) private var model
-    @State private var isArchivePresented = false
     @State private var isSidebarCollapsed = false
     @State private var isSidebarOverlayPresented = false
+    @State private var logsPane = LogsPane.shell
+    @State private var servicesPane = ServicesPane.containers
+    @AppStorage(AppSection.showServicesTabKey) private var showServicesTab = true
+    @AppStorage(AppSection.showTasksTabKey) private var showTasksTab = true
     @Namespace private var sidebarSelectionNamespace
 
     public init() {}
@@ -43,6 +46,12 @@ public struct RootView: View {
                             .font(.system(size: 15, weight: .regular))
                     }
                     .sharedBackgroundVisibility(.hidden)
+                    if model.selection == .logs || model.selection == .containers {
+                        ToolbarItem(placement: .principal) {
+                            sectionSwitcher
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -78,10 +87,16 @@ public struct RootView: View {
         }
         .background(WindowBackgroundShapeStyle.windowBackground)
         .animation(.snappy(duration: 0.24), value: isSidebarCollapsed)
-        .modifier(RootPresentations(isArchivePresented: $isArchivePresented))
+        .modifier(RootPresentations())
+        .onChange(of: showServicesTab) { _, shown in
+            if !shown, model.selection == .containers { model.selection = .hosts }
+        }
+        .onChange(of: showTasksTab) { _, shown in
+            if !shown, model.selection == .tasks { model.selection = .hosts }
+        }
         #else
         NavigationSplitView {
-            List(AppSection.allCases, selection: $model.selection) { section in
+            List(sidebarSections, selection: $model.selection) { section in
                 Label(section.title, systemImage: section.systemImage)
                     .tag(section)
             }
@@ -90,7 +105,7 @@ public struct RootView: View {
         } detail: {
             content
         }
-        .modifier(RootPresentations(isArchivePresented: $isArchivePresented))
+        .modifier(RootPresentations())
         #endif
     }
 
@@ -101,7 +116,7 @@ public struct RootView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(AppSection.allCases) { section in
+                    ForEach(sidebarSections) { section in
                         let isSelected = selection.wrappedValue == section
 
                         Button {
@@ -204,25 +219,74 @@ public struct RootView: View {
             HostsView()
         case .tunnels:
             TunnelsView()
-        case .services:
-            ServicesView()
+        case .containers:
+            switch servicesPane {
+            case .containers:
+                ContainersView()
+            case .services:
+                PlannedFeatureView(
+                    title: FeatureL10n.text(.sectionServices),
+                    systemImage: "cylinder.split.1x2",
+                    description: FeatureL10n.text(.servicesEmptyDescription)
+                )
+            }
         case .credentials:
-            CredentialsView(isArchivePresented: $isArchivePresented)
+            CredentialsView()
         case .snippets:
-            PlannedFeatureView(
-                title: "Snippets",
-                systemImage: "chevron.left.forwardslash.chevron.right",
-                description: "Reusable commands and parameterized snippets are planned."
-            )
+            SnippetsView()
         case .logs:
-            SessionLogsView()
+            SessionLogsView(pane: $logsPane)
+        case .tasks:
+            PlannedFeatureView(
+                title: FeatureL10n.text(.sectionTasks),
+                systemImage: "checklist",
+                description: FeatureL10n.text(.tasksEmptyDescription)
+            )
+        }
+    }
+
+    private var sidebarSections: [AppSection] {
+        AppSection.allCases.filter { section in
+            switch section {
+            case .containers: showServicesTab
+            case .tasks: showTasksTab
+            default: true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sectionSwitcher: some View {
+        switch model.selection {
+        case .logs:
+            InspectorSegmentedSelector(
+                selection: $logsPane,
+                options: [
+                    InspectorSelectorOption(value: LogsPane.shell, title: FeatureL10n.text(.logsModeShell)),
+                    InspectorSelectorOption(value: LogsPane.events, title: FeatureL10n.text(.logsModeEvents)),
+                ]
+            )
+        case .containers:
+            InspectorSegmentedSelector(
+                selection: $servicesPane,
+                options: [
+                    InspectorSelectorOption(value: ServicesPane.containers, title: FeatureL10n.text(.sectionContainers)),
+                    InspectorSelectorOption(value: ServicesPane.services, title: FeatureL10n.text(.sectionServices)),
+                ]
+            )
+        default:
+            EmptyView()
         }
     }
 }
 
+private enum ServicesPane: Hashable {
+    case containers
+    case services
+}
+
 private struct RootPresentations: ViewModifier {
     @Environment(TerminatorAppModel.self) private var model
-    @Binding var isArchivePresented: Bool
 
     func body(content: Content) -> some View {
         content
@@ -241,6 +305,5 @@ private struct RootPresentations: ViewModifier {
                 get: { model.connectionHost },
                 set: { if $0 == nil { Task { await model.cancelConnectionPresentation() } } }
             )) { _ in ConnectionSheet() }
-            .sheet(isPresented: $isArchivePresented) { ArchiveView() }
     }
 }

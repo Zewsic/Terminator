@@ -7,7 +7,9 @@ struct HostKeyPromptView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            LabeledContent(FeatureL10n.text(.connectionEndpoint), value: endpoint)
+            LabeledContent(FeatureL10n.text(.connectionEndpoint)) {
+                Text(endpoint)
+            }
             LabeledContent(FeatureL10n.text(.connectionAlgorithm), value: algorithm)
             ForEach(Array(fingerprints.enumerated()), id: \.offset) { _, item in
                 VStack(alignment: .leading, spacing: 2) {
