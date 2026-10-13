@@ -24,13 +24,10 @@ extension TerminatorStore {
 
     public func saveHost(_ host: HostProfile) throws {
         var validated = try host.validated()
-        let incomingSegments = validated.connectCommandSegments
-        validated.connectCommandSegments = ConnectCommandScript.stored(incomingSegments)
-        if !incomingSegments.isEmpty {
-            validated.connectCommands = ConnectCommandScript.render(
-                validated.connectCommandSegments, scripts: try activeSnippetScripts()
-            )
-        }
+        validated.connectCommandSegments = ConnectCommandScript.stored(validated.connectCommandSegments)
+        validated.connectCommands = ConnectCommandScript.render(
+            validated.connectCommandSegments, scripts: try activeSnippetScripts()
+        )
         try validateReferences(for: validated)
         let before = try fetchHost(id: validated.id)?.domain
         var current = validated

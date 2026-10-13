@@ -17,6 +17,8 @@ actor DockerPoller {
     private let hostRepository: any HostRepository
     private let publish: @Sendable (DockerInventorySnapshot) async -> Void
     private var task: Task<Void, Never>?
+    private var sleeper: Task<Void?, Never>?
+    private var pendingRefresh = false
     private var cached: [String: [DockerContainer]] = [:]
 
     init(
@@ -39,9 +41,28 @@ actor DockerPoller {
                 }
                 let snapshot = await self.collect()
                 await self.publish(snapshot)
-                try? await Task.sleep(for: .seconds(3))
+                if await self.consumeRefresh() { continue }
+                let sleep = Task { try? await Task.sleep(for: .seconds(3)) }
+                await self.storeSleeper(sleep)
+                await sleep.value
+                await self.storeSleeper(nil)
             }
         }
+    }
+
+    func requestRefresh() {
+        pendingRefresh = true
+        sleeper?.cancel()
+    }
+
+    private func consumeRefresh() -> Bool {
+        let pending = pendingRefresh
+        pendingRefresh = false
+        return pending
+    }
+
+    private func storeSleeper(_ task: Task<Void?, Never>?) {
+        sleeper = task
     }
 
     private var lastFailed: [DockerEndpoint] = []

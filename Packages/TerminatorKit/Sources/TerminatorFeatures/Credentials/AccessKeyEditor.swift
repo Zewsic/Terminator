@@ -384,15 +384,17 @@ struct AccessKeyEditor: View {
             }
         } else if inline, draft.credentialID != nil {
             InspectorActionArea {
-                if hasChanges {
-                    InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
-                        draft = originalDraft
-                        revealPassphrase = false
-                        syncGenerationControls(with: originalDraft.generation)
+                HStack(spacing: 8) {
+                    InspectorProminentAction(title: FeatureL10n.text(.featureAccessKeyEditorExportToHost)) {
+                        isExportToHostPresented = true
                     }
-                }
-                InspectorProminentAction(title: FeatureL10n.text(.featureAccessKeyEditorExportToHost)) {
-                    isExportToHostPresented = true
+                    if hasChanges {
+                        InspectorRevertButton {
+                            draft = originalDraft
+                            revealPassphrase = false
+                            syncGenerationControls(with: originalDraft.generation)
+                        }
+                    }
                 }
             }
         }

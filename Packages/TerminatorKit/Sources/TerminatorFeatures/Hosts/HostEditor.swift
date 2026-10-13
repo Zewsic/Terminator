@@ -13,6 +13,7 @@ struct HostEditor: View {
     @State private var isLoadingStoredPassword: Bool
     @State private var pane: HostEditorPane = .edit
     @State private var showsHelperInstall = false
+    @State private var showsServerSettingsHint = false
     let explicitImport: Bool
     let onSave: @MainActor (HostDraft) async -> Bool
     let onClose: @MainActor () -> Void
@@ -224,9 +225,11 @@ struct HostEditor: View {
         }
         .sheet(isPresented: $showsHelperInstall) {
             if let host = persistedHost {
-                HelperInstallSheet(host: host)
+                HelperInstallSheet(host: host, reinstall: model.helperIsInstalled(host.id))
             }
         }
+        .onAppear { revealServerSettingsHint() }
+        .onChange(of: draft.id) { _, _ in revealServerSettingsHint() }
     }
 
     private var selectedAccessKeyIDs: Set<UUID> {
@@ -248,16 +251,53 @@ struct HostEditor: View {
     @ViewBuilder
     private var screenHeading: some View {
         if draft.id != nil {
-            InspectorSegmentedSelector(
-                selection: $pane,
-                options: headingOptions,
-                style: .joined
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 8) {
+                InspectorSegmentedSelector(
+                    selection: $pane,
+                    options: headingOptions,
+                    style: .joined
+                )
+                Spacer(minLength: 8)
+                Button(action: openServerSettings) {
+                    Text(FeatureL10n.text(.serverSettingsOpen))
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(minHeight: 28)
+                        .background(Capsule().fill(.quaternary))
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showsServerSettingsHint, arrowEdge: .bottom) {
+                    Text(FeatureL10n.text(.serverSettingsHint))
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(width: 240)
+                }
+                .onChange(of: showsServerSettingsHint) { _, shown in
+                    if !shown { ServerSettingsHint.markSeen() }
+                }
+            }
         } else {
             Text(editorTitle)
                 .font(.title2.bold())
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func revealServerSettingsHint() {
+        guard draft.id != nil, !ServerSettingsHint.seen else { return }
+        showsServerSettingsHint = true
+    }
+
+    private func openServerSettings() {
+        ServerSettingsHint.markSeen()
+        showsServerSettingsHint = false
+        guard let host = persistedHost else { return }
+        if model.helperIsInstalled(host.id) {
+            model.presentServerSettings(host)
+        } else {
+            showsHelperInstall = true
         }
     }
 
@@ -479,10 +519,15 @@ struct HostEditor: View {
             }
         } else if hasChanges {
             InspectorActionArea {
-                InspectorProminentAction(title: FeatureL10n.text(.actionSave), disabled: !canConnectNow) {
-                    Task { await saveDraft() }
+                HStack(spacing: 8) {
+                    InspectorProminentAction(title: FeatureL10n.text(.actionSave), disabled: !canConnectNow) {
+                        Task { await saveDraft() }
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    InspectorRevertButton {
+                        draft = originalDraft
+                    }
                 }
-                .keyboardShortcut(.defaultAction)
             }
         } else if canConnect {
             InspectorActionArea {
@@ -492,6 +537,12 @@ struct HostEditor: View {
                     }
                     .keyboardShortcut(.defaultAction)
                     InspectorCircleMenu(disabled: !canConnectNow) {
+                        if canReinstallHelper {
+                            Button(FeatureL10n.text(.helperReinstall), systemImage: "arrow.clockwise") {
+                                showsHelperInstall = true
+                            }
+                            Divider()
+                        }
                         if let host = persistedHost, !model.connectionPhase(for: host.id).isDisconnected {
                             Button(FeatureL10n.text(.featureHostEditorDisconnect), systemImage: "xmark.circle") {
                                 Task { await model.disconnect(host) }
@@ -606,6 +657,11 @@ struct HostEditor: View {
 
     private var canConnect: Bool { draft.id != nil && model.capabilities.externalTerminal }
 
+    private var canReinstallHelper: Bool {
+        guard let id = draft.id else { return false }
+        return model.helperIsInstalled(id) && !model.isHelperOnline(id)
+    }
+
     private var canConnectNow: Bool {
         !draft.hostname.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -630,5 +686,15 @@ struct HostEditor: View {
 
     private func moveAccessKey(_ index: Int, by delta: Int) {
         draft.moveAccessKey(at: index, by: delta)
+    }
+}
+
+enum ServerSettingsHint {
+    private static let key = "serverSettings.hintSeen"
+
+    static var seen: Bool { UserDefaults.standard.bool(forKey: key) }
+
+    static func markSeen() {
+        UserDefaults.standard.set(true, forKey: key)
     }
 }

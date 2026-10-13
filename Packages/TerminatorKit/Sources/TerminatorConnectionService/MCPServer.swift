@@ -151,7 +151,7 @@ enum TerminatorMCPServer {
         tool("list_hosts", "List saved SSH hosts and connection state."),
         tool(
             "connect",
-            "Connect to a host. Creates a headless shell session (no tmux/screen) unless open_terminal is true.",
+            "Connect to a host. Creates a headless shell and does not run the host start command, unless open_terminal is true.",
             [
                 "host": ["type": "string", "description": "Host id, name, or hostname"],
                 "open_terminal": ["type": "boolean", "description": "Open Terminal.app instead of a headless session"],

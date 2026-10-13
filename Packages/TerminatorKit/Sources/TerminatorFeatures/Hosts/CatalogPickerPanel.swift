@@ -89,18 +89,14 @@ struct CatalogPickerPanel: View {
                             disabled: isWorking || selectedCount == 0,
                             action: onPrimary
                         )
-                        Button { isConfirmingDelete = true } label: {
-                            Image(systemName: "trash")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 32, height: 32)
+                        InspectorCircleButton(
+                            systemImage: "trash",
+                            foreground: Color.red.opacity(0.72),
+                            help: destructiveTitle ?? ""
+                        ) {
+                            isConfirmingDelete = true
                         }
-                        .buttonStyle(.glassProminent)
-                        .buttonBorderShape(.circle)
-                        .controlSize(.large)
-                        .tint(.red)
                         .disabled(isWorking || selectedCount == 0)
-                        .help(destructiveTitle ?? "")
-                        .accessibilityLabel(destructiveTitle ?? "")
                     }
                 } else {
                     InspectorProminentAction(

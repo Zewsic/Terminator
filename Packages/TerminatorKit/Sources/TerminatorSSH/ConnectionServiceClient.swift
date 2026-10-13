@@ -103,6 +103,10 @@ public actor ConnectionServiceClient: ExternalTerminalConnecting, SSHTunnelContr
         }
     }
 
+    public func refreshDocker() async {
+        _ = try? await request(.refreshDocker)
+    }
+
     public func dockerInventory() async -> AsyncStream<DockerInventorySnapshot> {
         let id = UUID()
         return AsyncStream { continuation in

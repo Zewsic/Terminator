@@ -28,6 +28,13 @@ public protocol IdentityRepository: Sendable {
 public protocol HistoryRepository: Sendable {
     func listHistory(entity: HistoryEntity?) async throws -> [HistoryEntry]
     func revert(historyEntryID: UUID) async throws
+    func recordHistory(
+        entity: HistoryEntity,
+        entityID: UUID,
+        operation: HistoryOperation,
+        before: Data?,
+        after: Data?
+    ) async throws
 }
 
 public enum SecretAccessPolicy: Equatable, Sendable {

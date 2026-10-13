@@ -71,6 +71,7 @@ struct CredentialsView: View {
                 ) { value in
                     let saved = await model.saveIdentity(value)
                     if value.id == nil, saved { closeInspector() }
+                    return saved
                 } onClose: {
                     closeInspector()
                 }

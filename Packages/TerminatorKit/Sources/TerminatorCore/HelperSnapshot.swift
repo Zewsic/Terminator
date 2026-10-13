@@ -3,7 +3,7 @@ import Foundation
 public enum HelperSnapshot {
     public static let port = 53621
     /// Bump when the bundled helper script changes. Older installations update to this.
-    public static let version = "4"
+    public static let version = "8"
 
     public static func reportedVersion(_ data: Data) -> String? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }

@@ -149,7 +149,7 @@ struct HostsView: View {
             }
         }
         .sheet(item: $helperHost) { host in
-            HelperInstallSheet(host: host)
+            HelperInstallSheet(host: host, reinstall: model.helperIsInstalled(host.id))
         }
     }
 
@@ -220,11 +220,21 @@ struct HostsView: View {
             Task { await model.connect(host, with: .terminal) }
         })
         .contextMenu {
-            if model.canInstallHelper(host) {
+            if model.helperIsInstalled(host.id), !model.isHelperOnline(host.id) {
+                Button(FeatureL10n.text(.helperReinstall), systemImage: "arrow.clockwise") {
+                    helperHost = host
+                }
+            }
+            if model.helperIsInstalled(host.id) {
+                Button(FeatureL10n.text(.serverSettingsOpen), systemImage: "slider.horizontal.3") {
+                    model.presentServerSettings(host)
+                }
+            } else {
                 Button(FeatureL10n.text(.helperInstall), systemImage: "shippingbox") {
                     helperHost = host
                 }
             }
+            Divider()
             if model.capabilities.externalTerminal {
                 Menu(FeatureL10n.text(.hostsConnectWith)) {
                     ForEach(model.terminalApplications) { terminal in

@@ -228,6 +228,64 @@ struct InspectorActionArea<Content: View>: View {
     }
 }
 
+struct InspectorRevertButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        InspectorCircleButton(
+            systemImage: "xmark",
+            help: FeatureL10n.text(.identityEditorCancelChanges),
+            action: action
+        )
+    }
+}
+
+/// Same control as the host Connect chevron. A plain overlay takes the click
+/// so this stays that menu, not the smaller primary-action bezel.
+struct InspectorCircleButton: View {
+    let systemImage: String
+    var disabled = false
+    var foreground: Color?
+    var help: String = ""
+    let action: () -> Void
+
+    var body: some View {
+        InspectorCircleMenu(systemImage: systemImage, foreground: foreground, disabled: disabled) {
+            Button(help.isEmpty ? systemImage : help, action: action)
+        }
+        .overlay {
+            Button(action: action) {
+                Color.clear
+                    .contentShape(.circle)
+            }
+            .buttonStyle(.plain)
+        }
+        .help(help)
+        .accessibilityLabel(help.isEmpty ? systemImage : help)
+    }
+}
+
+struct InspectorCircleLabel: View {
+    let systemImage: String
+    var foreground: Color?
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(foreground ?? Color.primary)
+            .frame(width: 32, height: 32)
+    }
+}
+
+extension View {
+    func inspectorCircleChrome() -> some View {
+        menuIndicator(.hidden)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .fixedSize()
+    }
+}
+
 struct InspectorProminentAction: View {
     let title: String
     var disabled = false
@@ -280,6 +338,8 @@ struct InspectorSecondaryAction: View {
 }
 
 struct InspectorCircleMenu<Content: View>: View {
+    var systemImage = "chevron.down"
+    var foreground: Color?
     var disabled = false
     @ViewBuilder let content: () -> Content
 
@@ -287,14 +347,9 @@ struct InspectorCircleMenu<Content: View>: View {
         Menu {
             content()
         } label: {
-            Image(systemName: "chevron.down")
-                .font(.caption.weight(.bold))
-                .frame(width: 32, height: 32)
+            InspectorCircleLabel(systemImage: systemImage, foreground: foreground)
         }
-        .menuIndicator(.hidden)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .fixedSize()
+        .inspectorCircleChrome()
         .disabled(disabled)
     }
 }

@@ -246,6 +246,7 @@ public protocol SSHTunnelControlling: Sendable {
     func tunnelTraffic() async -> AsyncStream<TunnelTrafficSnapshot>
     func controlDocker(endpoint: DockerEndpoint, containerID: String, action: DockerControlAction) async throws -> String
     func openContainerShell(endpoint: DockerEndpoint, containerID: String) async throws
+    func refreshDocker() async
 }
 
 public struct TunnelPhaseEvent: Codable, Equatable, Sendable {

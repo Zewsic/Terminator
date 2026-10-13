@@ -171,6 +171,12 @@ struct ContainersView: View {
         .toolbar {
             ToolbarSpacer(.flexible)
             ToolbarItem {
+                Button(FeatureL10n.text(.actionRefresh), systemImage: "arrow.clockwise") {
+                    Task { await model.refreshContainers() }
+                }
+                .help(FeatureL10n.text(.actionRefresh))
+            }
+            ToolbarItem {
                 Button(FeatureL10n.text(.containersGroups), systemImage: "shippingbox") {
                     showsGroupSettings = true
                 }
@@ -568,22 +574,5 @@ private struct ContainerCard: View {
         case "dead": return .red
         default: return nil
         }
-    }
-}
-
-private struct InspectorCircleButton: View {
-    let systemImage: String
-    var disabled = false
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 13, weight: .semibold))
-                .frame(width: 32, height: 32)
-        }
-        .buttonStyle(.glass)
-        .buttonBorderShape(.circle)
-        .disabled(disabled)
     }
 }

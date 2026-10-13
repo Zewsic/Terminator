@@ -31,7 +31,25 @@ extension TerminatorStore {
         case .identity: try revertIdentity(using: entry)
         case .tunnel: try revertTunnel(using: entry)
         case .snippet: try revertSnippet(using: entry)
+        case .task: throw PersistenceError.taskChangeIsIrreversible
         }
+        try modelContext.save()
+    }
+
+    public func recordHistory(
+        entity: HistoryEntity,
+        entityID: UUID,
+        operation: HistoryOperation,
+        before: Data?,
+        after: Data?
+    ) throws {
+        modelContext.insert(ChangeRecord(entry: HistoryEntry(
+            entity: entity,
+            entityID: entityID,
+            operation: operation,
+            beforeSnapshot: before,
+            afterSnapshot: after
+        )))
         try modelContext.save()
     }
 

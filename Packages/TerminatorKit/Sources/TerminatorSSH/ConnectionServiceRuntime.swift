@@ -227,6 +227,9 @@ public actor ConnectionServiceRuntime {
             } catch {
                 write(.response(id: id, .failed(error.localizedDescription)), to: channel)
             }
+        case .refreshDocker:
+            await dockerPoller?.requestRefresh()
+            write(.response(id: id, .ok), to: channel)
         case .containerShell(let endpoint, let containerID):
             do {
                 try await openContainerShell(endpoint: endpoint, containerID: containerID)
@@ -589,7 +592,8 @@ public actor ConnectionServiceRuntime {
             host: host,
             terminal: .other,
             size: TerminalSize(columns: 120, rows: 32),
-            persistence: .none
+            persistence: .none,
+            connectCommands: ""
         )
         headless[handle.id] = HeadlessSession(hostID: host.id, hostName: host.displayName, output: "")
         Task { await self.pump(handle) }

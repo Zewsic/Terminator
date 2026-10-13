@@ -33,8 +33,65 @@ extension TerminatorAppModel {
         helperOnline.contains(hostID)
     }
 
-    func installHelper(on host: HostProfile, progress: (String) -> Void) async throws {
-        progress(FeatureL10n.text(.helperInstallPreparing))
+    func helperIsInstalled(_ hostID: UUID) -> Bool {
+        helperInstallations.contains { $0.hostID == hostID }
+    }
+
+    func presentServerSettings(_ host: HostProfile) {
+        if !openServerSettings.contains(host.id) {
+            openServerSettings.append(host.id)
+        }
+        selection = .serverSettings(host.id)
+    }
+
+    func pruneServerSettings() {
+        let live = Set(hosts.map(\.id))
+        openServerSettings.removeAll { !live.contains($0) }
+        if case .serverSettings(let id) = selection, !openServerSettings.contains(id) {
+            selection = .section(.hosts)
+        }
+    }
+
+    struct HelperCall: Sendable {
+        var hostname: String
+        var port: Int
+        var token: String
+        var certificateDER: Data
+    }
+
+    func helperCall(hostID: UUID) async -> HelperCall? {
+        guard let installation = helperInstallations.first(where: { $0.hostID == hostID }),
+              let host = hosts.first(where: { $0.id == hostID }),
+              let token = await token(for: installation) else { return nil }
+        let reach = try? await reachableEndpoint(host: host, installation: installation)
+        let endpoint = reach ?? (hostname: host.hostname, port: installation.port)
+        return HelperCall(
+            hostname: endpoint.hostname,
+            port: endpoint.port,
+            token: token,
+            certificateDER: installation.certificateDER
+        )
+    }
+
+    func closeServerSettings(_ id: UUID) {
+        openServerSettings.removeAll { $0 == id }
+        if case .serverSettings(let selected) = selection, selected == id {
+            selection = .section(.hosts)
+        }
+    }
+
+    func installHelper(on host: HostProfile, progress: (String, Double) -> Void) async throws {
+        if !connectionPhase(for: host.id).isLinked {
+            progress(FeatureL10n.text(.helperInstallConnecting), 0.04)
+            guard let service = externalTerminalService else { throw HelperInstallError.unavailable }
+            do {
+                try await service.prepare(hostID: host.id)
+            } catch {
+                throw HelperInstallError.remote(error.localizedDescription)
+            }
+        }
+        let previousSecretID = helperInstallations.first { $0.hostID == host.id }?.tokenSecretID
+        progress(FeatureL10n.text(.helperInstallPreparing), 0.22)
         let material = try await Task.detached(priority: .userInitiated) {
             try HelperMaterial.generate()
         }.value
@@ -48,7 +105,7 @@ extension TerminatorAppModel {
             try? await secretStore.purge(id: secretID)
             throw HelperInstallError.unavailable
         }
-        progress(FeatureL10n.text(.helperInstallStarting))
+        progress(FeatureL10n.text(.helperInstallStarting), 0.38)
         let command = HelperRemoteScript.command(prefix: host.dockerCommandPrefix, material: material)
         let result: SSHExecResult
         do {
@@ -72,13 +129,14 @@ extension TerminatorAppModel {
             certificateDER: material.certificateDER
         )
         helperTokens[host.id] = material.token
-        progress(FeatureL10n.text(.helperInstallOpening))
+        progress(FeatureL10n.text(.helperInstallOpening), 0.8)
+        var storedInstallation = installation
         do {
             let localPort = try await openHelperForward(for: host)
-            var tunneled = installation
-            tunneled.localPort = localPort
-            if try await waitUntilOnline(host: host, installation: tunneled, token: material.token, seconds: 20) {
-                try storeHelper(tunneled)
+            storedInstallation.localPort = localPort
+            if try await waitUntilOnline(host: host, installation: storedInstallation, token: material.token, seconds: 20) {
+                progress(FeatureL10n.text(.helperInstallWaiting), 1)
+                try await commitHelper(storedInstallation, replacing: previousSecretID)
                 return
             }
         } catch is CancellationError {
@@ -86,12 +144,13 @@ extension TerminatorAppModel {
             await abortInstall(secretID: secretID, hostID: host.id)
             throw CancellationError()
         } catch {
-            await tunnelController?.stopTunnel(id: HelperForward.tunnelID(for: host.id))
+            // The container is up. Keep the tunnel attempt and fall through to a direct check.
         }
-        progress(FeatureL10n.text(.helperInstallWaiting))
+        progress(FeatureL10n.text(.helperInstallWaiting), 0.9)
         do {
-            if try await waitUntilOnline(host: host, installation: installation, token: material.token, seconds: 8) {
-                try storeHelper(installation)
+            if try await waitUntilOnline(host: host, installation: storedInstallation, token: material.token, seconds: 12) {
+                progress(FeatureL10n.text(.helperInstallWaiting), 1)
+                try await commitHelper(storedInstallation, replacing: previousSecretID)
                 return
             }
         } catch is CancellationError {
@@ -101,12 +160,18 @@ extension TerminatorAppModel {
             await abortInstall(secretID: secretID, hostID: host.id)
             throw HelperInstallError.remote(error.localizedDescription)
         }
-        try? await secretStore.purge(id: secretID)
-        helperTokens[host.id] = nil
-        await tunnelController?.stopTunnel(id: HelperForward.tunnelID(for: host.id))
-        let log = await helperFailureLog(service, host: host)
-        let detail = "The helper is running, but \(host.hostname):\(HelperSnapshot.port) is not reachable from this Mac."
-        throw HelperInstallError.remote(log == FeatureL10n.text(.helperTimedOut) ? detail : "\(detail)\n\(log)")
+        // The container started. Saving it lets the poller reach it through the tunnel instead of reporting a false failure while SSH status keeps updating.
+        if storedInstallation.localPort == nil {
+            storedInstallation.localPort = HelperForward.localPort(for: host.id)
+        }
+        try await commitHelper(storedInstallation, replacing: previousSecretID)
+    }
+
+    private func commitHelper(_ installation: HelperInstallation, replacing previousSecretID: SecretID?) async throws {
+        try storeHelper(installation)
+        if let previousSecretID, previousSecretID != installation.tokenSecretID {
+            try? await secretStore.purge(id: previousSecretID)
+        }
     }
     private func storeHelper(_ installation: HelperInstallation) throws {
         var stored = helperInstallations.filter { $0.hostID != installation.hostID }
@@ -267,12 +332,17 @@ extension TerminatorAppModel {
         }
         for (id, value) in results {
             if let value {
+                helperPollMisses[id] = 0
                 helperOnline.insert(id)
                 helperStatuses[id] = value.snapshot
                 helperContainers[id] = value.containers
                 noteReportedVersion(value.version, hostID: id)
             } else {
-                markHelperOffline(id)
+                let misses = (helperPollMisses[id] ?? 0) + 1
+                helperPollMisses[id] = misses
+                if misses >= 3 || !helperOnline.contains(id) {
+                    markHelperOffline(id)
+                }
             }
         }
         applyHostStatuses()
@@ -440,6 +510,7 @@ extension TerminatorAppModel {
         helperOnline.remove(hostID)
         helperStatuses[hostID] = nil
         helperContainers[hostID] = nil
+        helperPollMisses[hostID] = 0
     }
 
     private func applyHostStatuses() {

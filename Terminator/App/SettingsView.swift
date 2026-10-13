@@ -5,9 +5,8 @@ import TerminatorFeatures
 struct SettingsView: View {
     let capabilities: AppCapabilities
     @State private var access = AccessPreferencesStore.load()
-    @AppStorage(AppSection.showServicesTabKey) private var showServicesTab = true
-    @AppStorage(AppSection.showTasksTabKey) private var showTasksTab = true
     private var dismissedHints = DismissedHintsStore.shared
+    private var development = DevelopmentPreferences.shared
 
     var body: some View {
         TabView {
@@ -16,6 +15,10 @@ struct SettingsView: View {
             if !capabilities.isAppStoreBuild {
                 accessTab
                     .tabItem { Label(AppL10n.text(.settingsAccess), systemImage: "lock.rectangle.stack") }
+            }
+            if development.enabled {
+                developmentTab
+                    .tabItem { Label(AppL10n.text(.settingsDevelopment), systemImage: "hammer") }
             }
         }
         .frame(width: 560, height: 420)
@@ -30,9 +33,11 @@ struct SettingsView: View {
                 }
                 .disabled(!dismissedHints.hasDismissedHints)
             }
-            Section(AppL10n.text(.settingsSidebar)) {
-                Toggle(AppL10n.text(.settingsShowServicesTab), isOn: $showServicesTab)
-                Toggle(AppL10n.text(.settingsShowTasksTab), isOn: $showTasksTab)
+            Section {
+                Toggle(AppL10n.text(.settingsDevelopmentEnable), isOn: developmentEnabled)
+                Text(AppL10n.text(.settingsDevelopmentCaption))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Section(AppL10n.text(.settingsLicensing)) {
                 Text(AppL10n.text(.settingsPolyformNoncommercial100))
@@ -75,6 +80,23 @@ struct SettingsView: View {
             }
             #endif
         }
+    }
+
+    private var developmentTab: some View {
+        Form {
+            Section {
+                Toggle(AppL10n.text(.settingsDevelopmentRestrictions), isOn: restrictionsRemoved)
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var developmentEnabled: Binding<Bool> {
+        Binding(get: { development.enabled }, set: { development.enabled = $0 })
+    }
+
+    private var restrictionsRemoved: Binding<Bool> {
+        Binding(get: { development.restrictionsRemoved }, set: { development.restrictionsRemoved = $0 })
     }
 
     private var mcpCommand: String {

@@ -82,10 +82,15 @@ struct SnippetEditor: View {
         } actions: {
             InspectorActionArea {
                 if draft != originalDraft {
-                    InspectorProminentAction(title: FeatureL10n.text(.actionSave), disabled: !canSave) {
-                        Task { await save() }
+                    HStack(spacing: 8) {
+                        InspectorProminentAction(title: FeatureL10n.text(.actionSave), disabled: !canSave) {
+                            Task { await save() }
+                        }
+                        .keyboardShortcut(.defaultAction)
+                        InspectorRevertButton {
+                            draft = originalDraft
+                        }
                     }
-                    .keyboardShortcut(.defaultAction)
                 }
                 if savedSnippet != nil, draft == originalDraft {
                     InspectorProminentAction(title: FeatureL10n.text(.snippetExecute)) {

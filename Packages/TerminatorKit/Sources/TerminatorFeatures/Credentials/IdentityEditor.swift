@@ -10,7 +10,7 @@ struct IdentityEditor: View {
     @State private var revealPassword = false
     @State private var isLoadingStoredPassword: Bool
     @State private var isAuthorizationExpanded = true
-    let onSave: @MainActor (IdentityDraft) async -> Void
+    let onSave: @MainActor (IdentityDraft) async -> Bool
     let inline: Bool
     let explicitImport: Bool
     let onDraftChange: ((IdentityDraft) -> Void)?
@@ -23,7 +23,7 @@ struct IdentityEditor: View {
         explicitImport: Bool = false,
         onDraftChange: ((IdentityDraft) -> Void)? = nil,
         isDiscarding: @escaping () -> Bool = { false },
-        onSave: @escaping @MainActor (IdentityDraft) async -> Void,
+        onSave: @escaping @MainActor (IdentityDraft) async -> Bool,
         onClose: (() -> Void)? = nil
     ) {
         _draft = State(initialValue: draft)
@@ -253,9 +253,17 @@ struct IdentityEditor: View {
 
     private var editActions: some View {
         InspectorActionArea {
-            InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
-                draft = originalDraft
-                revealPassword = false
+            HStack(spacing: 8) {
+                InspectorProminentAction(title: FeatureL10n.text(.actionSave)) {
+                    Task {
+                        if await onSave(draft) { originalDraft = draft }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                InspectorRevertButton {
+                    draft = originalDraft
+                    revealPassword = false
+                }
             }
         }
     }

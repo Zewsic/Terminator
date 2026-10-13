@@ -166,7 +166,7 @@ enum HelperMaterial {
 
 enum HelperRemoteScript {
     static let server = #"""
-import json, os, ssl, time, socket, subprocess, urllib.parse
+import json, os, ssl, time, socket, subprocess, urllib.parse, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 TOKEN = open("/helper/token", encoding="utf-8").read().strip()
@@ -496,6 +496,8 @@ def image_facts(image, image_id):
             data = json.loads(info) if info else {}
         except json.JSONDecodeError:
             data = {}
+        if not isinstance(data, dict):
+            data = {}
         fact["local"] = not (data.get("RepoDigests") or [])
         if fact["local"]:
             history = unix_get("/images/" + quoted + "/history")
@@ -503,8 +505,15 @@ def image_facts(image, image_id):
                 rows = json.loads(history) if history else []
             except json.JSONDecodeError:
                 rows = []
+            if not isinstance(rows, list):
+                rows = []
             for row in rows:
-                base = from_image(row.get("CreatedBy") or "")
+                if not isinstance(row, dict):
+                    continue
+                created = row.get("CreatedBy") or ""
+                if not isinstance(created, str):
+                    continue
+                base = from_image(created)
                 if base:
                     fact["baseImage"] = base
                     break
@@ -722,6 +731,148 @@ def docker_logs(container_id):
         return 400, b""
     return unix_call("GET", "/containers/" + container_id + "/logs?stdout=1&stderr=1&timestamps=1&tail=200")
 
+def host_run(args, input_text=None, timeout=8):
+    if not os.path.isdir("/host"):
+        return None
+    attempts = (
+        ["/usr/sbin/chroot", "/host"],
+        ["/bin/chroot", "/host"],
+        ["/bin/busybox", "chroot", "/host"],
+    )
+    last = None
+    for prefix in attempts:
+        try:
+            last = subprocess.run(prefix + args, input=input_text, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return last
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if last.returncode != 127:
+            return last
+    return last
+
+def helper_user():
+    try:
+        name = open("/helper/user", encoding="utf-8").read().strip()
+    except OSError:
+        name = ""
+    return name or "root"
+
+def crontab_text():
+    completed = host_run(["crontab", "-u", helper_user(), "-l"])
+    if completed is None or completed.returncode == 127:
+        return "", False
+    if completed.returncode != 0:
+        return "", True
+    return completed.stdout, True
+
+def shell_quote(value):
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+def task_index():
+    user = helper_user()
+    lines = [
+        "u=" + shell_quote(user),
+        "id -u \"$u\" 2>/dev/null || true",
+        "echo __TERMINATOR_SPLIT__",
+        "if command -v crontab >/dev/null 2>&1; then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "if command -v systemctl >/dev/null 2>&1 && test -d /run/systemd/system; then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "if command -v at >/dev/null 2>&1 && (pgrep -x atd >/dev/null 2>&1 || pgrep -x at >/dev/null 2>&1); then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "if command -v anacron >/dev/null 2>&1 && test -r /etc/anacrontab; then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "if command -v launchctl >/dev/null 2>&1; then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "if [ -d /etc/cron.d ] && { [ \"$(id -u \"$u\")\" = 0 ] || { command -v sudo >/dev/null 2>&1 && sudo -n -u \"$u\" sudo -n true >/dev/null 2>&1; }; }; then echo yes; else echo no; fi",
+        "echo __TERMINATOR_SPLIT__",
+        "cron=$(crontab -u \"$u\" -l 2>/dev/null; echo __CODE__$?)",
+        "printf '%s\\n' \"$cron\"",
+        "echo __TERMINATOR_SPLIT__",
+        "for f in /etc/crontab /etc/cron.d/*; do",
+        "  [ -f \"$f\" ] || continue",
+        "  printf '%s\\n' __TERMINATOR_FILE__",
+        "  printf '%s\\n' \"$f\"",
+        "  cat \"$f\" 2>/dev/null || true",
+        "  printf '\\n%s\\n' __TERMINATOR_ENDFILE__",
+        "done",
+    ]
+    completed = host_run(["sh", "-c", "\n".join(lines)], timeout=8)
+    if completed is None:
+        raise RuntimeError("host command failed")
+    parts = ("\n" + completed.stdout).split("\n__TERMINATOR_SPLIT__\n")
+    def flagged(index):
+        return index < len(parts) and parts[index].strip() == "yes"
+    section = parts[7] if len(parts) > 7 else ""
+    text, _, code_text = section.rpartition("__CODE__")
+    try:
+        code = int(code_text.strip().splitlines()[0]) if code_text.strip() else 1
+    except ValueError:
+        code = 1
+    present = code != 127
+    if code != 0:
+        text = ""
+    files = []
+    blob = parts[8] if len(parts) > 8 else ""
+    for chunk in blob.split("__TERMINATOR_ENDFILE__"):
+        marker = "__TERMINATOR_FILE__\n"
+        if marker not in chunk:
+            continue
+        tail = chunk.split(marker, 1)[1]
+        path, _, body = tail.partition("\n")
+        path = path.strip()
+        if not path.startswith("/etc/cron"):
+            continue
+        if body.endswith("\n"):
+            body = body[:-1]
+        files.append({"path": path, "body": body, "writable": False})
+    return {
+        "user": user,
+        "capabilities": {
+            "cron": flagged(1) and present,
+            "systemd": flagged(2),
+            "at": flagged(3),
+            "anacron": flagged(4),
+            "launchd": flagged(5),
+            "root": parts[0].strip() == "0" if parts else False,
+            "systemCron": flagged(6),
+        },
+        "crontab": text,
+        "crontabHash": hashlib.sha256(text.encode()).hexdigest(),
+        "systemCron": files,
+    }
+
+def write_crontab(payload):
+    expected = payload.get("expectedHash", "")
+    body = payload.get("body", "")
+    current, present = crontab_text()
+    if not present:
+        return 409, {"ok": False, "conflict": True}
+    digest = hashlib.sha256(current.encode()).hexdigest()
+    if digest != expected:
+        return 409, {"ok": False, "conflict": True, "crontabHash": digest}
+    if body and not body.endswith("\n"):
+        body += "\n"
+    completed = host_run(["crontab", "-u", helper_user(), "-"], input_text=body, timeout=12)
+    if completed is None or completed.returncode != 0:
+        detail = completed.stderr.strip() if completed else "crontab failed"
+        return 400, {"ok": False, "error": detail[:400]}
+    updated, _ = crontab_text()
+    return 200, {"ok": True, "crontabHash": hashlib.sha256(updated.encode()).hexdigest()}
+
+def task_executions(limit, offset):
+    count = max(1, min(offset + limit, 400))
+    completed = host_run(["sh", "-c", "journalctl -t CRON --no-pager -o short-iso -n %d 2>/dev/null" % count], timeout=12)
+    text = completed.stdout if completed and completed.returncode == 0 else ""
+    if not text.strip():
+        completed = host_run(["sh", "-c", "grep -h CRON /var/log/syslog /var/log/cron /var/log/messages 2>/dev/null | tail -n %d" % count], timeout=12)
+        text = completed.stdout if completed else ""
+    lines = [line for line in text.splitlines() if line.strip()]
+    lines.reverse()
+    selected = lines[offset:offset + limit]
+    return [{"line": line} for line in selected]
+
 class Handler(BaseHTTPRequestHandler):
     def authorized(self):
         return self.headers.get("Authorization") == "Bearer " + TOKEN
@@ -758,14 +909,50 @@ class Handler(BaseHTTPRequestHandler):
             code, body = docker_runtime(route[0])
             self.send_bytes(code, body, "text/plain")
             return
-        if self.path.split("?", 1)[0] != "/v1/snapshot":
+        path = self.path.split("?", 1)[0]
+        if path == "/v1/tasks":
+            try:
+                payload = json.dumps(task_index()).encode()
+            except Exception as exc:
+                self.send_bytes(500, json.dumps({"error": str(exc)[:400]}).encode(), "application/json")
+                return
+            self.send_bytes(200, payload, "application/json")
+            return
+        if path == "/v1/tasks/executions":
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                limit = int(query.get("limit", ["10"])[0])
+            except ValueError:
+                limit = 10
+            try:
+                offset = int(query.get("offset", ["0"])[0])
+            except ValueError:
+                offset = 0
+            self.send_bytes(200, json.dumps(task_executions(max(1, limit), max(0, offset))).encode(), "application/json")
+            return
+        if path != "/v1/snapshot":
             self.reject(404)
             return
-        self.send_bytes(200, json.dumps(snapshot()).encode(), "application/json")
+        try:
+            payload = snapshot()
+        except Exception as exc:
+            payload = {"version": VERSION, "error": str(exc)[:400], "containers": []}
+        self.send_bytes(200, json.dumps(payload).encode(), "application/json")
 
     def do_POST(self):
         if not self.authorized():
             self.reject(401)
+            return
+        if self.path.split("?", 1)[0] == "/v1/tasks/crontab":
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length) if length else b""
+            try:
+                payload = json.loads(raw.decode() or "{}")
+            except ValueError:
+                self.reject(400)
+                return
+            code, body = write_crontab(payload)
+            self.send_bytes(code, json.dumps(body).encode(), "application/json")
             return
         route = self.container_route()
         if not route:
@@ -808,6 +995,8 @@ if __name__ == "__main__":
         chmod 600 "$dir/key.pem"
         printf '%s' '\(material.token)' > "$dir/token"
         chmod 600 "$dir/token"
+        printf '%s\n' "$(id -un)" > "$dir/user"
+        chmod 600 "$dir/user"
         cat > "$dir/server.py" <<'TERMINATOR_PY'
         \(server)
         TERMINATOR_PY
@@ -825,6 +1014,8 @@ if __name__ == "__main__":
         test -s "$dir/cert.pem"
         test -s "$dir/key.pem"
         test -s "$dir/token"
+        printf '%s\n' "$(id -un)" > "$dir/user"
+        chmod 600 "$dir/user"
         cat > "$dir/server.py" <<'TERMINATOR_PY'
         \(server)
         TERMINATOR_PY
@@ -841,7 +1032,7 @@ if __name__ == "__main__":
     private static func relaunch(tool: String) -> String {
         """
         \(tool) rm -f terminator-helper >/dev/null 2>&1 || true
-        if ! \(tool) run -d --name terminator-helper --restart unless-stopped --pid host -p \(HelperSnapshot.port):\(HelperSnapshot.port) -v /var/run/docker.sock:/var/run/docker.sock -v /:/host:ro -v "$dir":/helper:ro python:3.12-alpine python /helper/server.py >> "$dir/install.log" 2>&1; then
+        if ! \(tool) run -d --name terminator-helper --restart unless-stopped --pid host -p \(HelperSnapshot.port):\(HelperSnapshot.port) -v /var/run/docker.sock:/var/run/docker.sock -v /:/host -v "$dir":/helper:ro python:3.12-alpine python /helper/server.py >> "$dir/install.log" 2>&1; then
           echo "Could not start the helper container."
           tail -n 40 "$dir/install.log" 2>/dev/null || true
           exit 1
@@ -876,13 +1067,11 @@ final class HelperPin: NSObject, URLSessionDelegate, @unchecked Sendable {
     ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust,
-              let pinned = SecCertificateCreateWithData(nil, certificateDER as CFData),
-              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
-              let leaf = chain.first,
-              (SecCertificateCopyData(leaf) as Data) == certificateDER else {
+              let pinned = SecCertificateCreateWithData(nil, certificateDER as CFData) else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
+        // Evaluate after the pin is the only anchor. Reading the chain first leaves it empty, so every poll was rejected while SSH status still updated.
         SecTrustSetPolicies(trust, SecPolicyCreateBasicX509())
         SecTrustSetAnchorCertificates(trust, [pinned] as CFArray)
         SecTrustSetAnchorCertificatesOnly(trust, true)
@@ -995,7 +1184,8 @@ enum HelperPoll {
         token: String,
         certificateDER: Data,
         method: String,
-        path: String
+        path: String,
+        body: Data? = nil
     ) async throws -> (Int, Data) {
         let literal = hostname.contains(":") ? "[\(hostname)]" : hostname
         guard let url = URL(string: "https://\(literal):\(port)\(path)") else {
@@ -1003,8 +1193,12 @@ enum HelperPoll {
         }
         var request = URLRequest(url: url)
         request.httpMethod = method
+        request.httpBody = body
         request.timeoutInterval = 20
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if body != nil {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         let pin = HelperPin(certificateDER: certificateDER)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
@@ -1014,5 +1208,74 @@ enum HelperPoll {
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw HelperInstallError.unavailable }
         return (http.statusCode, data)
+    }
+
+    static func tasks(
+        hostname: String,
+        port: Int,
+        token: String,
+        certificateDER: Data
+    ) async throws -> Data {
+        let (status, data) = try await send(
+            hostname: hostname,
+            port: port,
+            token: token,
+            certificateDER: certificateDER,
+            method: "GET",
+            path: "/v1/tasks"
+        )
+        guard (200..<300).contains(status) else {
+            throw HelperInstallError.remote(String(decoding: data, as: UTF8.self))
+        }
+        return data
+    }
+
+    static func saveCrontab(
+        hostname: String,
+        port: Int,
+        token: String,
+        certificateDER: Data,
+        expectedHash: String,
+        body: String
+    ) async throws -> (conflict: Bool, hash: String?) {
+        let payload = try JSONSerialization.data(withJSONObject: ["expectedHash": expectedHash, "body": body])
+        let (status, data) = try await send(
+            hostname: hostname,
+            port: port,
+            token: token,
+            certificateDER: certificateDER,
+            method: "POST",
+            path: "/v1/tasks/crontab",
+            body: payload
+        )
+        let object = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if status == 409 { return (true, object["crontabHash"] as? String) }
+        guard (200..<300).contains(status) else {
+            let message = object["error"] as? String ?? String(decoding: data, as: UTF8.self)
+            throw HelperInstallError.remote(message.isEmpty ? "Couldn't save this task." : message)
+        }
+        return (false, object["crontabHash"] as? String)
+    }
+
+    static func executions(
+        hostname: String,
+        port: Int,
+        token: String,
+        certificateDER: Data,
+        limit: Int
+    ) async throws -> [String] {
+        let (status, data) = try await send(
+            hostname: hostname,
+            port: port,
+            token: token,
+            certificateDER: certificateDER,
+            method: "GET",
+            path: "/v1/tasks/executions?limit=\(limit)&offset=0"
+        )
+        guard (200..<300).contains(status),
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        return rows.compactMap { $0["line"] as? String }
     }
 }

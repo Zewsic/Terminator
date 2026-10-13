@@ -3,6 +3,7 @@ import TerminatorCore
 
 struct HostOSIcon: View {
     let osID: String?
+    var side: CGFloat = HostCardMetrics.iconSize
 
     var body: some View {
         let descriptor = HostOSCatalog.descriptor(for: osID)
@@ -19,6 +20,8 @@ struct HostOSIcon: View {
             }
         }
         .frame(width: HostCardMetrics.iconSize, height: HostCardMetrics.iconSize)
+        .scaleEffect(side / HostCardMetrics.iconSize)
+        .frame(width: side, height: side)
         .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
         .accessibilityHidden(true)
     }

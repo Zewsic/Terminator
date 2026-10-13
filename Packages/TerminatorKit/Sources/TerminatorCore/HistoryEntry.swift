@@ -6,6 +6,7 @@ public enum HistoryEntity: String, Codable, CaseIterable, Hashable, Sendable {
     case identity
     case tunnel
     case snippet
+    case task
 }
 
 public enum HistoryOperation: String, Codable, CaseIterable, Hashable, Sendable {
@@ -62,6 +63,7 @@ private extension HistoryEntity {
         case .identity: TerminatorCoreLocalization.text(.hostUsernameIdentity)
         case .tunnel: TerminatorCoreLocalization.text(.historyEntityTunnel)
         case .snippet: TerminatorCoreLocalization.text(.historyEntitySnippet)
+        case .task: TerminatorCoreLocalization.text(.historyEntityTask)
         }
     }
 }

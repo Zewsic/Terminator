@@ -57,6 +57,18 @@ struct SessionLogsView: View {
     private var toolbar: some ToolbarContent {
         ToolbarSpacer(.flexible)
         ToolbarItem {
+            Button(FeatureL10n.text(.actionRefresh), systemImage: "arrow.clockwise") {
+                Task {
+                    if pane == .shell {
+                        await model.reloadSessionLogs()
+                    } else {
+                        await model.reloadHistory()
+                    }
+                }
+            }
+            .help(FeatureL10n.text(.actionRefresh))
+        }
+        ToolbarItem {
             ToolbarSearchField(text: $search, prompt: FeatureL10n.text(.logsSearch))
         }
         .sharedBackgroundVisibility(.hidden)
@@ -406,7 +418,9 @@ private struct HistoryEventInspector: View {
     @State private var isDetailsExpanded = true
 
     private var detail: HistoryEventDetail { HistoryEventSummary.detail(for: entry) }
-    private var canRevert: Bool { !(entry.entity == .credential && entry.operation == .purged) }
+    private var canRevert: Bool {
+        entry.entity != .task && !(entry.entity == .credential && entry.operation == .purged)
+    }
 
     var body: some View {
         InspectorScreen(heading: heading) {
@@ -438,9 +452,11 @@ private struct HistoryEventInspector: View {
                     .foregroundStyle(.secondary)
             }
         } actions: {
-            InspectorActionArea {
-                InspectorProminentAction(title: FeatureL10n.text(.historyRevert), disabled: !canRevert) {
-                    isConfirmingRevert = true
+            if entry.entity != .task {
+                InspectorActionArea {
+                    InspectorProminentAction(title: FeatureL10n.text(.historyRevert), disabled: !canRevert) {
+                        isConfirmingRevert = true
+                    }
                 }
             }
         }
@@ -480,7 +496,7 @@ private struct HistoryEventInspector: View {
     }
 }
 
-private struct HistoryChangeRow: View {
+struct HistoryChangeRow: View {
     let change: HistoryFieldChange
 
     var body: some View {

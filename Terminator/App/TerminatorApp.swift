@@ -17,8 +17,6 @@ struct TerminatorApp: App {
     private let modelContainer: ModelContainer
     @NSApplicationDelegateAdaptor(TerminatorAppDelegate.self) private var appDelegate
     @State private var appModel: TerminatorAppModel
-    @AppStorage(AppSection.showServicesTabKey) private var showServicesTab = true
-    @AppStorage(AppSection.showTasksTabKey) private var showTasksTab = true
 
     init() {
         do {
@@ -152,10 +150,6 @@ struct TerminatorApp: App {
         .defaultLaunchBehavior(.suppressed)
         #endif
         .commands {
-            CommandGroup(after: .sidebar) {
-                Toggle(AppL10n.text(.settingsShowServicesTab), isOn: $showServicesTab)
-                Toggle(AppL10n.text(.settingsShowTasksTab), isOn: $showTasksTab)
-            }
             CommandGroup(after: .help) {
                 Divider()
                 if let telegram = URL(string: "https://t.me/zewsic") {

@@ -41,12 +41,9 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
 
     public func saveHost(_ host: HostProfile) throws {
         var host = try host.validated()
-        let incomingSegments = host.connectCommandSegments
-        host.connectCommandSegments = ConnectCommandScript.stored(incomingSegments)
-        if !incomingSegments.isEmpty {
-            let scripts = Dictionary(uniqueKeysWithValues: snippets.values.filter { !$0.isDeleted }.map { ($0.id, $0.script) })
-            host.connectCommands = ConnectCommandScript.render(host.connectCommandSegments, scripts: scripts)
-        }
+        host.connectCommandSegments = ConnectCommandScript.stored(host.connectCommandSegments)
+        let scripts = Dictionary(uniqueKeysWithValues: snippets.values.filter { !$0.isDeleted }.map { ($0.id, $0.script) })
+        host.connectCommands = ConnectCommandScript.render(host.connectCommandSegments, scripts: scripts)
         let before = hosts[host.id]
         hosts[host.id] = host
         history.append(try entry(entity: .host, id: host.id, operation: before == nil ? .created : .updated, before: before, after: host))
@@ -139,6 +136,22 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
         history.filter { entity == nil || $0.entity == entity }.sorted { $0.timestamp > $1.timestamp }
     }
 
+    public func recordHistory(
+        entity: HistoryEntity,
+        entityID: UUID,
+        operation: HistoryOperation,
+        before: Data?,
+        after: Data?
+    ) {
+        history.append(HistoryEntry(
+            entity: entity,
+            entityID: entityID,
+            operation: operation,
+            beforeSnapshot: before,
+            afterSnapshot: after
+        ))
+    }
+
     public func revert(historyEntryID: UUID) throws {
         guard let change = history.first(where: { $0.id == historyEntryID }) else { return }
         switch change.entity {
@@ -184,6 +197,8 @@ public actor InMemoryTerminatorStore: HostRepository, CredentialRepository, Iden
                 identities[change.entityID] = current
             }
             history.append(try entry(entity: .identity, id: change.entityID, operation: .restored, before: before, after: identities[change.entityID]))
+        case .task:
+            return
         case .snippet:
             let before = snippets[change.entityID]
             if let snapshot = change.beforeSnapshot {

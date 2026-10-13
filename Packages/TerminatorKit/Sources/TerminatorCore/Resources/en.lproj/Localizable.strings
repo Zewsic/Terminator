@@ -64,6 +64,7 @@
 "error.store.historyEntryNotFound" = "The history entry no longer exists.";
 "error.store.unsupportedHistorySchema" = "History schema version %ld is not supported.";
 "error.store.secretPurgeIsIrreversible" = "Purged secret material cannot be restored.";
+"error.store.taskChangeIsIrreversible" = "Task changes stay in Events. They are not reverted on the server.";
 "error.store.credentialInUse" = "Detach this credential from every identity and host before archiving it.";
 "error.store.identityInUse" = "Detach this identity from every host before archiving it.";
 "error.store.referencedCredentialUnavailable" = "A referenced credential is unavailable.";
@@ -77,6 +78,7 @@
 "history.entity.identity" = "Identity";
 "history.entity.tunnel" = "Tunnel";
 "history.entity.snippet" = "Snippet";
+"history.entity.task" = "Task";
 "error.store.snippetNotFound" = "The snippet no longer exists.";
 "error.snippet.missingName" = "A snippet name is required.";
 "error.snippet.missingScript" = "A snippet script is required.";

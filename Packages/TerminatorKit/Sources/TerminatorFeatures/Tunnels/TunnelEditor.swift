@@ -42,13 +42,15 @@ struct TunnelEditor: View {
             }
         } actions: {
             InspectorActionArea {
-                if hasChanges {
-                    InspectorTextAction(title: FeatureL10n.text(.identityEditorCancelChanges)) {
-                        draft = originalDraft
+                HStack(spacing: 8) {
+                    InspectorProminentAction(title: primaryTitle) {
+                        performPrimary()
                     }
-                }
-                InspectorProminentAction(title: primaryTitle) {
-                    performPrimary()
+                    if hasChanges {
+                        InspectorRevertButton {
+                            draft = originalDraft
+                        }
+                    }
                 }
             }
         }

@@ -50,6 +50,7 @@ public enum ConnectionControlRequest: Codable, Sendable {
     case startTunnel(TunnelProfile)
     case stopTunnel(UUID)
     case prepare(hostID: UUID)
+    case refreshDocker
     case docker(endpoint: DockerEndpoint, containerID: String, action: DockerControlAction)
     case containerShell(endpoint: DockerEndpoint, containerID: String)
 }

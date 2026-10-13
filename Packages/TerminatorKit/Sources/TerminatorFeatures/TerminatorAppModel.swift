@@ -5,7 +5,15 @@ import TerminatorCore
 @MainActor
 @Observable
 public final class TerminatorAppModel {
-    public var selection: AppSection = .hosts
+    public var selection: SidebarSelection = .section(.hosts)
+    public internal(set) var openServerSettings: [UUID] = []
+    var serverTasks: [UUID: [ScheduledTask]] = [:]
+    var serverCrontabs: [UUID: CrontabDocument] = [:]
+    var serverTaskCapabilities: [UUID: TaskCapabilities] = [:]
+    var serverTaskExecutions: [UUID: [TaskExecution]] = [:]
+    var taskLastRuns: [UUID: [UUID: Date]] = [:]
+    var serverTasksLoading: Set<UUID> = []
+    var serverTasksOffline: Set<UUID> = []
     public internal(set) var hosts: [HostProfile] = []
     public internal(set) var archivedHosts: [HostProfile] = []
     public internal(set) var tunnels: [TunnelProfile] = []
@@ -37,6 +45,7 @@ public final class TerminatorAppModel {
     var dockerFailed: Set<UUID> = []
     var dockerProbing: Set<UUID> = []
     var helperPoller: Task<Void, Never>?
+    var helperPollMisses: [UUID: Int] = [:]
     public internal(set) var tunnelTraffic: [UUID: TunnelTrafficSnapshot] = [:]
     public var dockerOutput: DockerCommandOutput?
     public internal(set) var sessionLogs: [SessionLogMetadata] = []

@@ -11,6 +11,7 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
     case historyEntryNotFound
     case unsupportedHistorySchema(Int)
     case secretPurgeIsIrreversible
+    case taskChangeIsIrreversible
     case credentialInUse
     case identityInUse
     case referencedCredentialUnavailable
@@ -26,6 +27,7 @@ public enum PersistenceError: LocalizedError, Equatable, Sendable {
         case .historyEntryNotFound: TerminatorCoreLocalization.text("error.store.historyEntryNotFound")
         case .unsupportedHistorySchema(let version): TerminatorCoreLocalization.text("error.store.unsupportedHistorySchema", version)
         case .secretPurgeIsIrreversible: TerminatorCoreLocalization.text("error.store.secretPurgeIsIrreversible")
+        case .taskChangeIsIrreversible: TerminatorCoreLocalization.text("error.store.taskChangeIsIrreversible")
         case .credentialInUse: TerminatorCoreLocalization.text("error.store.credentialInUse")
         case .identityInUse: TerminatorCoreLocalization.text("error.store.identityInUse")
         case .referencedCredentialUnavailable: TerminatorCoreLocalization.text("error.store.referencedCredentialUnavailable")

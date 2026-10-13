@@ -16,6 +16,24 @@ extension NIOSSHConnectionCoordinator {
         persistence: SessionPersistence,
         command: String? = nil
     ) async throws -> SSHSessionHandle {
+        try await openSession(
+            host: host,
+            terminal: terminal,
+            size: size,
+            persistence: persistence,
+            command: command,
+            connectCommands: nil
+        )
+    }
+
+    public func openSession(
+        host: HostProfile,
+        terminal: TerminalApplication,
+        size: TerminalSize,
+        persistence: SessionPersistence,
+        command: String? = nil,
+        connectCommands: String?
+    ) async throws -> SSHSessionHandle {
         guard let pool = pools[host.id], pool.channel.isActive else { throw SSHTransportError.sessionUnavailable }
         let id = UUID()
         let (stream, continuation) = AsyncStream<SSHSessionEvent>.makeStream()
@@ -27,7 +45,7 @@ extension NIOSSHConnectionCoordinator {
             let remoteCommand = command ?? SessionLaunchCommand.remoteCommand(
                 sessionID: id,
                 persistence: persistence,
-                connectCommands: host.connectCommands,
+                connectCommands: connectCommands ?? host.connectCommands,
                 shell: host.remoteShell
             )
             let child = try await createSessionChannel(

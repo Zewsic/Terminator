@@ -46,6 +46,7 @@ enum HistoryEventSummary {
         case .credential: "key"
         case .identity: "person"
         case .snippet: "curlybraces"
+        case .task: "calendar.badge.clock"
         }
     }
 

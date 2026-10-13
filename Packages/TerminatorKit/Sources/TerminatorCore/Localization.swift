@@ -80,6 +80,7 @@ public enum CoreString: String, CaseIterable, Sendable {
     case historyEntityIdentity = "history.entity.identity"
     case historyEntityTunnel = "history.entity.tunnel"
     case historyEntitySnippet = "history.entity.snippet"
+    case historyEntityTask = "history.entity.task"
     case errorStoreSnippetNotFound = "error.store.snippetNotFound"
     case errorSnippetMissingName = "error.snippet.missingName"
     case errorSnippetMissingScript = "error.snippet.missingScript"
